@@ -19,10 +19,13 @@ import * as XLSX from "xlsx";
  * - Supports: sticky header, column resizing (A+B), column reorder, column hide/unhide,
  *   filters (text, choices, number_range, date_range, custom), sorting, selection,
  *   virtualization (@tanstack/react-virtual), CSV/XLSX export, pagination fallback.
+ * - Now supports both client-side and server-side pagination and filtering
  *
  * Usage notes:
  * - Pass `columns` array with optional `filter` config for per-column filters.
  * - Use `Cell` to provide custom cell renderers.
+ * - For server-side pagination, pass `pagination` prop with serverSide: true
+ * - For server-side search/filtering, pass serverSideSearch and serverSideFilters props
  */
 
 // -----------------------------
@@ -49,6 +52,16 @@ export type ColumnDef<T> = {
   sortable?: boolean;
 };
 
+type PaginationProps = {
+  totalCount: number;
+  currentPage: number;
+  pageSize: number;
+  onPageChange?: (page: number) => void;
+  hasNextPage?: boolean;
+  hasPreviousPage?: boolean;
+  serverSide?: boolean; // If true, uses server-side pagination
+};
+
 type GenericTableProps<T> = {
   data: T[];
   columns: ColumnDef<T>[];
@@ -61,6 +74,13 @@ type GenericTableProps<T> = {
   // allow overriding the global search and filter pipeline
   searchFn?: (query: string, row: T, visibleColumns: ColumnDef<T>[]) => boolean;
   filterFn?: (columnFilterState: Record<string, any>, row: T, col: ColumnDef<T>) => boolean;
+  // Pagination props
+  pagination?: PaginationProps;
+  // Server-side search and filtering
+  serverSideSearch?: string;
+  onServerSearchChange?: (search: string) => void;
+  serverSideFilters?: Record<string, any>;
+  onServerFilterChange?: (filters: Record<string, any>) => void;
 };
 
 // -----------------------------
@@ -99,6 +119,11 @@ export default function GenericTable<T extends Record<string, any>>({
   className,
   searchFn,
   filterFn,
+  pagination,
+  serverSideSearch = "",
+  onServerSearchChange,
+  serverSideFilters = {},
+  onServerFilterChange,
 }: GenericTableProps<T>) {
   // Columns & widths state (keep them in sync)
   const [columns, setColumns] = useState<ColumnDef<T>[]>(
@@ -118,14 +143,14 @@ export default function GenericTable<T extends Record<string, any>>({
   // sorting
   const [sortBy, setSortBy] = useState<{ id: string; direction: "asc" | "desc" } | null>(null);
 
-  // filters (per-column)
+  // filters (per-column) - for client-side filtering
   const [columnFilters, setColumnFilters] = useState<Record<string, any>>({});
 
-  // global search
-  const [query, setQuery] = useState("");
+  // global search - for client-side searching
+  const [clientSideQuery, setClientSideQuery] = useState("");
 
-  // pagination (used when not virtualized)
-  const [page, setPage] = useState(1);
+  // pagination (used when not virtualized or for client-side pagination)
+  const [page, setPage] = useState(pagination?.currentPage || 1);
 
   // selection - now using stable IDs instead of indices
   const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
@@ -139,10 +164,53 @@ export default function GenericTable<T extends Record<string, any>>({
   // scroll container ref (both header and body live inside)
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // Determine if we're using server-side pagination/filtering
+  const isServerSidePagination = pagination?.serverSide || false;
+  const isServerSideFiltering = !!onServerFilterChange;
+  const isServerSideSearch = !!onServerSearchChange;
+  
+  // Use page from pagination prop if available and server-side
+  const currentPage = isServerSidePagination ? (pagination?.currentPage || 1) : page;
+  const effectivePageSize = pagination?.pageSize || pageSize;
+
+  // Handle filter changes - send to server if server-side filtering is enabled
+  const handleFilterChange = (filterId: string, value: any) => {
+    if (isServerSideFiltering && onServerFilterChange) {
+      const newFilters = { ...serverSideFilters, [filterId]: value };
+      
+      // Remove empty filters
+      Object.keys(newFilters).forEach(key => {
+        if (newFilters[key] === '' || newFilters[key] === null || newFilters[key] === undefined) {
+          delete newFilters[key];
+        }
+      });
+      
+      onServerFilterChange(newFilters);
+    } else {
+      // Client-side filtering
+      setColumnFilters(prev => ({ ...prev, [filterId]: value }));
+    }
+  };
+
+  // Handle search change - send to server if server-side search is enabled
+  const handleSearchChange = (query: string) => {
+    if (isServerSideSearch && onServerSearchChange) {
+      onServerSearchChange(query);
+    } else {
+      // Client-side search
+      setClientSideQuery(query);
+    }
+  };
+
   // virtualization
   const parentRef = scrollRef; // reuse same scroll container
   const processed = useMemo(() => {
-    // apply column-level filters and global search then sorting
+    // For server-side filtering/searching, use data as-is
+    if (isServerSideFiltering || isServerSideSearch) {
+      return [...incomingData];
+    }
+
+    // For client-side: apply column-level filters and global search then sorting
     let list = [...incomingData];
 
     // per-column filters:
@@ -206,6 +274,7 @@ export default function GenericTable<T extends Record<string, any>>({
     }
 
     // global search: either use consumer-provided or default (search across visible cols)
+    const query = isServerSideSearch ? serverSideSearch : clientSideQuery;
     if (query && query.trim() !== "") {
       const q = query.toLowerCase();
       list = list.filter((row) =>
@@ -246,7 +315,7 @@ export default function GenericTable<T extends Record<string, any>>({
     }
 
     return list;
-  }, [incomingData, columns, columnFilters, query, sortBy, searchFn, filterFn]);
+  }, [incomingData, columns, columnFilters, clientSideQuery, serverSideSearch, sortBy, searchFn, filterFn, isServerSideFiltering, isServerSideSearch]);
 
   // Create a mapping of row IDs to their current indices in the processed data
   const rowIdToIndexMap = useMemo(() => {
@@ -268,10 +337,16 @@ export default function GenericTable<T extends Record<string, any>>({
       .filter(Boolean) as T[];
   }, [selectedIds, rowIdToIndexMap, processed]);
 
-  const total = processed.length;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const pageIndex = Math.min(page - 1, Math.max(0, totalPages - 1));
-  const pageItems = virtualized ? processed : processed.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize);
+  // Calculate totals
+  const total = isServerSidePagination ? (pagination?.totalCount || 0) : processed.length;
+  const totalPages = Math.max(1, Math.ceil(total / effectivePageSize));
+  
+  // Calculate page items
+  let pageItems = processed;
+  if (!isServerSidePagination && !virtualized) {
+    const pageIndex = Math.min(currentPage - 1, Math.max(0, totalPages - 1));
+    pageItems = processed.slice(pageIndex * effectivePageSize, pageIndex * effectivePageSize + effectivePageSize);
+  }
 
   // selection effect - now uses stable IDs
   useEffect(() => {
@@ -281,12 +356,24 @@ export default function GenericTable<T extends Record<string, any>>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds]);
 
-  // virtualization setup
+  // Handle page changes
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > totalPages) return;
+    
+    if (isServerSidePagination && pagination?.onPageChange) {
+      pagination.onPageChange(newPage);
+    } else {
+      setPage(newPage);
+    }
+  };
+
+  // virtualization setup (only for client-side virtualization)
   const rowVirtualizer = useVirtualizer({
     count: pageItems.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 56,
     overscan: 8,
+    enabled: virtualized && !isServerSidePagination,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -431,7 +518,7 @@ export default function GenericTable<T extends Record<string, any>>({
   // UI helpers: render filters
   // -----------------------------
   const renderFilterForColumn = (col: ColumnDef<T>) => {
-    const val = columnFilters[col.id];
+    const val = isServerSideFiltering ? serverSideFilters[col.id] : columnFilters[col.id];
 
     if (!col.filter) return null;
 
@@ -440,9 +527,7 @@ export default function GenericTable<T extends Record<string, any>>({
         return (
           <input
             value={val ?? ""}
-            onChange={(e) =>
-              setColumnFilters((prev) => ({ ...prev, [col.id]: e.target.value }))
-            }
+            onChange={(e) => handleFilterChange(col.id, e.target.value)}
             placeholder={(col.filter as any).placeholder ?? "Search..."}
             className="mt-1 w-full px-2 py-1 text-xs border rounded"
           />
@@ -452,9 +537,7 @@ export default function GenericTable<T extends Record<string, any>>({
         return (
           <select
             value={val ?? ""}
-            onChange={(e) =>
-              setColumnFilters((prev) => ({ ...prev, [col.id]: e.target.value }))
-            }
+            onChange={(e) => handleFilterChange(col.id, e.target.value)}
             className="mt-1 w-full px-2 py-1 text-xs border rounded"
           >
             <option value="">All</option>
@@ -473,7 +556,7 @@ export default function GenericTable<T extends Record<string, any>>({
               type="number"
               value={(val && val.min) ?? ""}
               onChange={(e) =>
-                setColumnFilters((prev) => ({ ...prev, [col.id]: { ...(prev[col.id] || {}), min: e.target.value } }))
+                handleFilterChange(col.id, { ...(val || {}), min: e.target.value })
               }
               placeholder="min"
               className="w-1/2 px-2 py-1 text-xs border rounded"
@@ -482,7 +565,7 @@ export default function GenericTable<T extends Record<string, any>>({
               type="number"
               value={(val && val.max) ?? ""}
               onChange={(e) =>
-                setColumnFilters((prev) => ({ ...prev, [col.id]: { ...(prev[col.id] || {}), max: e.target.value } }))
+                handleFilterChange(col.id, { ...(val || {}), max: e.target.value })
               }
               placeholder="max"
               className="w-1/2 px-2 py-1 text-xs border rounded"
@@ -496,13 +579,13 @@ export default function GenericTable<T extends Record<string, any>>({
             <input
               type="date"
               value={(val && val.start) ?? ""}
-              onChange={(e) => setColumnFilters((prev) => ({ ...prev, [col.id]: { ...(prev[col.id] || {}), start: e.target.value } }))}
+              onChange={(e) => handleFilterChange(col.id, { ...(val || {}), start: e.target.value })}
               className="w-1/2 px-2 py-1 text-xs border rounded"
             />
             <input
               type="date"
               value={(val && val.end) ?? ""}
-              onChange={(e) => setColumnFilters((prev) => ({ ...prev, [col.id]: { ...(prev[col.id] || {}), end: e.target.value } }))}
+              onChange={(e) => handleFilterChange(col.id, { ...(val || {}), end: e.target.value })}
               className="w-1/2 px-2 py-1 text-xs border rounded"
             />
           </div>
@@ -512,9 +595,7 @@ export default function GenericTable<T extends Record<string, any>>({
         return (
           <input
             value={val ?? ""}
-            onChange={(e) =>
-              setColumnFilters((prev) => ({ ...prev, [col.id]: e.target.value }))
-            }
+            onChange={(e) => handleFilterChange(col.id, e.target.value)}
             placeholder="Filter..."
             className="mt-1 w-full px-2 py-1 text-xs border rounded"
           />
@@ -533,6 +614,9 @@ export default function GenericTable<T extends Record<string, any>>({
   // compute total width for horizontal scrolling
   const totalWidth = visibleColumns.reduce((sum, _, i) => sum + (colWidths[i] ?? 180), 0);
 
+  // Determine if we should show pagination
+  const showPagination = !virtualized || isServerSidePagination;
+
   return (
     <div className={clsx("w-full flex flex-col gap-3 text-sm", className, dark ? "dark" : "")}>
       {/* Toolbar */}
@@ -546,11 +630,12 @@ export default function GenericTable<T extends Record<string, any>>({
             {dark ? "☀️ Light" : "🌙 Dark"}
           </button>
 
+          {/* Global search - works for both client and server side */}
           <input
             className="px-3 py-1 rounded border border-gray-200 dark:border-gray-700"
             placeholder="Global search..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={isServerSideSearch ? serverSideSearch : clientSideQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
           />
 
           <button onClick={exportCSV} className="px-3 py-1 rounded bg-blue-600 text-white">Export CSV</button>
@@ -572,10 +657,22 @@ export default function GenericTable<T extends Record<string, any>>({
             onClick={() => {
               setColumns(initialColumns.map((c) => ({ ...c, visible: c.visible !== false })));
               setColWidths(initialColumns.map((c) => c.width ?? 180));
+              // Clear filters if server-side
+              if (isServerSideFiltering && onServerFilterChange) {
+                onServerFilterChange({});
+              } else {
+                setColumnFilters({});
+              }
+              // Clear search
+              if (isServerSideSearch && onServerSearchChange) {
+                onServerSearchChange("");
+              } else {
+                setClientSideQuery("");
+              }
             }}
             className="px-3 py-1 rounded border"
           >
-            Reset columns
+            Reset columns & filters
           </button>
 
           <div className="flex items-center gap-2">
@@ -657,7 +754,7 @@ export default function GenericTable<T extends Record<string, any>>({
                                 </div>
                               </div>
 
-                              {/* filter UI */}
+                              {/* filter UI - show for both client and server side */}
                               <div className="px-2 pb-2">
                                 {renderFilterForColumn(col)}
                               </div>
@@ -674,10 +771,10 @@ export default function GenericTable<T extends Record<string, any>>({
           </div>
         </div>
 
-        {/* Table body (virtualized) */}
+        {/* Table body */}
         <div style={{ minWidth: Math.max(totalWidth, 600) }}>
-          <div style={{ height: virtualized ? rowVirtualizer.getTotalSize() : undefined, position: "relative" }}>
-            {virtualized
+          <div style={{ height: virtualized && !isServerSidePagination ? rowVirtualizer.getTotalSize() : undefined, position: "relative" }}>
+            {virtualized && !isServerSidePagination
               ? virtualRows.map((virtualRow) => {
                   const index = virtualRow.index;
                   const row = pageItems[index];
@@ -724,9 +821,9 @@ export default function GenericTable<T extends Record<string, any>>({
                     </div>
                   );
                 })
-              : // non-virtual fallback
+              : // non-virtual or server-side pagination
                 pageItems.map((row, idx) => {
-                  const globalIndex = pageIndex * pageSize + idx;
+                  const globalIndex = isServerSidePagination ? idx : (currentPage - 1) * effectivePageSize + idx;
                   const rowId = getRowId(row, globalIndex);
                   return (
                     <div
@@ -765,15 +862,42 @@ export default function GenericTable<T extends Record<string, any>>({
         </div>
       </div>
 
-      {/* Footer / pagination if not virtualized */}
-      {!virtualized && (
+      {/* Footer / pagination */}
+      {showPagination && (
         <div className="px-3 py-2 flex items-center justify-between border-t border-gray-100">
-          <div className="text-xs text-gray-600">{`Showing ${pageIndex * pageSize + 1} - ${Math.min((pageIndex + 1) * pageSize, total)} of ${total}`}</div>
+          <div className="text-xs text-gray-600">
+            {isServerSidePagination
+              ? `Showing ${((currentPage - 1) * effectivePageSize) + 1} - ${Math.min(currentPage * effectivePageSize, total)} of ${total}`
+              : `Showing ${((currentPage - 1) * effectivePageSize) + 1} - ${Math.min(currentPage * effectivePageSize, total)} of ${total}`
+            }
+          </div>
           <div className="flex items-center gap-2">
-            <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="px-2 py-1 border rounded">Prev</button>
+            <button 
+              disabled={currentPage <= 1 || (isServerSidePagination && !pagination?.hasPreviousPage)} 
+              onClick={() => handlePageChange(currentPage - 1)} 
+              className="px-2 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Prev
+            </button>
             <span className="text-xs">Page</span>
-            <input className="w-12 text-center border rounded" value={page} onChange={(e) => setPage(Number(e.target.value || 1))} />
-            <button disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="px-2 py-1 border rounded">Next</button>
+            <input 
+              className="w-12 text-center border rounded" 
+              value={currentPage} 
+              onChange={(e) => {
+                const newPage = Number(e.target.value || 1);
+                if (newPage >= 1 && newPage <= totalPages) {
+                  handlePageChange(newPage);
+                }
+              }} 
+            />
+            <span className="text-xs">of {totalPages}</span>
+            <button 
+              disabled={currentPage >= totalPages || (isServerSidePagination && !pagination?.hasNextPage)} 
+              onClick={() => handlePageChange(currentPage + 1)} 
+              className="px-2 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
           </div>
         </div>
       )}

@@ -17,11 +17,12 @@ export const TemplateForm: React.FC<TemplateFormProps> = ({
 }) => {
   const [formData, setFormData] = useState<TemplateFormData>({
     template_name: '',
-    product: '',
-    day: '',
+    product_ids: [],  // Changed to array
+    day_ids: [],      // Changed to array
     template_desc: '',
     scheduled_datetime: '',
     is_active: true,
+    is_campaign_template: false, // Added new field
   });
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -66,6 +67,17 @@ export const TemplateForm: React.FC<TemplateFormProps> = ({
     }));
   };
 
+  const handleMultiSelectChange = (
+    e: React.ChangeEvent<HTMLSelectElement>,
+    field: 'product_ids' | 'day_ids'
+  ) => {
+    const selectedOptions = Array.from(e.target.selectedOptions, option => option.value);
+    setFormData(prev => ({
+      ...prev,
+      [field]: selectedOptions,
+    }));
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -85,42 +97,48 @@ export const TemplateForm: React.FC<TemplateFormProps> = ({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Product
+            Products (Select multiple)
           </label>
           <select
-            name="product"
-            value={formData.product}
-            onChange={handleChange}
+            name="product_ids"
+            multiple
+            value={formData.product_ids}
+            onChange={(e) => handleMultiSelectChange(e, 'product_ids')}
             required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-500"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-500 h-32"
           >
-            <option value="">Select Product</option>
             {products.map(product => (
               <option key={product.id} value={product.id}>
                 {product.product_name}
               </option>
             ))}
           </select>
+          <p className="text-sm text-gray-500 mt-1">
+            Hold Ctrl/Cmd to select multiple products
+          </p>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Day
+            Days (Select multiple)
           </label>
           <select
-            name="day"
-            value={formData.day}
-            onChange={handleChange}
+            name="day_ids"
+            multiple
+            value={formData.day_ids}
+            onChange={(e) => handleMultiSelectChange(e, 'day_ids')}
             required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-500"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent-500 h-32"
           >
-            <option value="">Select Day</option>
             {days.map(day => (
               <option key={day.id} value={day.id}>
                 {day.day_name} ({day.number_of_days} days)
               </option>
             ))}
           </select>
+          <p className="text-sm text-gray-500 mt-1">
+            Hold Ctrl/Cmd to select multiple days
+          </p>
         </div>
 
         <div>
@@ -155,15 +173,28 @@ export const TemplateForm: React.FC<TemplateFormProps> = ({
         </p>
       </div>
 
-      <div className="flex items-center">
-        <input
-          type="checkbox"
-          name="is_active"
-          checked={formData.is_active}
-          onChange={handleChange}
-          className="h-4 w-4 text-accent-600 focus:ring-accent-500 border-gray-300 rounded"
-        />
-        <label className="ml-2 block text-sm text-gray-700">Active</label>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="flex items-center">
+          <input
+            type="checkbox"
+            name="is_active"
+            checked={formData.is_active}
+            onChange={handleChange}
+            className="h-4 w-4 text-accent-600 focus:ring-accent-500 border-gray-300 rounded"
+          />
+          <label className="ml-2 block text-sm text-gray-700">Active</label>
+        </div>
+
+        <div className="flex items-center">
+          <input
+            type="checkbox"
+            name="is_campaign_template"
+            checked={formData.is_campaign_template}
+            onChange={handleChange}
+            className="h-4 w-4 text-accent-600 focus:ring-accent-500 border-gray-300 rounded"
+          />
+          <label className="ml-2 block text-sm text-gray-700">Campaign Template</label>
+        </div>
       </div>
 
       <div className="flex justify-end space-x-3 pt-4">

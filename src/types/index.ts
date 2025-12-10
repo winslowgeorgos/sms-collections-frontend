@@ -42,23 +42,40 @@ export interface CustomRule {
   is_active: boolean;
 }
 
+// types.ts - Add these types
 export interface Template {
   id: string;
   template_name: string;
-  product: string;
-  product_name?: string;
-  day: string;
-  day_name?: string;
+  products: Product[];  // Changed from single product to array
+  days: Day[];         // Changed from single day to array
+  product_ids?: string[];  // For form submission
+  day_ids?: string[];      // For form submission
+  product_names?: string[]; // For display
+  day_names?: string[];     // For display
   template_desc: string;
   scheduled_datetime: string | null;
   is_active: boolean;
+  is_campaign_template: boolean; // Added new field
+  approved_by?: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateFormData {
+  template_name: string;
+  product_ids: string[];  // Changed from single product
+  day_ids: string[];      // Changed from single day
+  template_desc: string;
+  scheduled_datetime: string;
+  is_active: boolean;
+  is_campaign_template: boolean; // Added new field
 }
 
 export interface SMSLog {
   id: string;
   template: string;
   template_name?: string;
+  template_link?: string;
   customer_name: string;
   phone_number: string;
   message: string;
@@ -66,11 +83,32 @@ export interface SMSLog {
   status_color?: string;
   error_message: string;
   sent_at: string | null;
+  
+  // New fields for external integration
+  external_id: string | null;
   customer_id: string | null;
   loan_id: string | null;
   product_name: string | null;
+  response_description: string | null;
+  response_code: string | null;
   installment_number: string | null;
+  message_hash: string | null;
+  
+  // New fields for tracking which specific product/day was used
+  used_product: string | null;  // Product ID
+  used_product_name: string | null;  // Product name for display
+  used_day: string | null;  // Day ID
+  used_day_name: string | null;  // Day name for display
+  
+  // New fields for campaign tracking
+  is_from_campaign: boolean;
+  campaign: string | null;  // Campaign ID
+  campaign_name: string | null;  // Campaign name for display
+  
   created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  is_active: boolean;
 }
 
 export interface CustomCampaign {
@@ -108,14 +146,14 @@ export interface CollectionsTemplate {
   scheduled_datetime: string | null;
 }
 
-export interface TemplateFormData {
-  template_name: string;
-  product: string;
-  day: string;
-  template_desc: string;
-  scheduled_datetime: string;
-  is_active: boolean;
-}
+// export interface TemplateFormData {
+//   template_name: string;
+//   product: string;
+//   day: string;
+//   template_desc: string;
+//   scheduled_datetime: string;
+//   is_active: boolean;
+// }
 
 export interface CampaignFormData {
   campaign_name: string;
