@@ -80,6 +80,11 @@ export const navItemsWithSectionsSubheadings: Array<{ label: string; items: NavI
         href: "/settings",
         icon: Settings,
       },
+        {
+        label: "Flagged Customers",
+        href: "/flaggedcustomers",
+        icon: Shield,
+      },
     ],
   },
 ];

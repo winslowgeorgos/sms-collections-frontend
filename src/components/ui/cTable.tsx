@@ -20,6 +20,7 @@ import * as XLSX from "xlsx";
  *   filters (text, choices, number_range, date_range, custom), sorting, selection,
  *   virtualization (@tanstack/react-virtual), CSV/XLSX export, pagination fallback.
  * - Now supports both client-side and server-side pagination and filtering
+ * - Text wraps by default instead of truncating
  *
  * Usage notes:
  * - Pass `columns` array with optional `filter` config for per-column filters.
@@ -50,6 +51,7 @@ export type ColumnDef<T> = {
   width?: number; // px initial width hint
   filter?: FilterDef<T>;
   sortable?: boolean;
+  wrapText?: boolean; // Optional: override default text wrapping behavior
 };
 
 type PaginationProps = {
@@ -81,6 +83,8 @@ type GenericTableProps<T> = {
   onServerSearchChange?: (search: string) => void;
   serverSideFilters?: Record<string, any>;
   onServerFilterChange?: (filters: Record<string, any>) => void;
+  // Text wrapping control
+  wrapText?: boolean; // Global override for text wrapping
 };
 
 // -----------------------------
@@ -124,10 +128,15 @@ export default function GenericTable<T extends Record<string, any>>({
   onServerSearchChange,
   serverSideFilters = {},
   onServerFilterChange,
+  wrapText: globalWrapText = true, // Default to true for text wrapping
 }: GenericTableProps<T>) {
   // Columns & widths state (keep them in sync)
   const [columns, setColumns] = useState<ColumnDef<T>[]>(
-    initialColumns.map((c) => ({ ...c, visible: c.visible !== false }))
+    initialColumns.map((c) => ({ 
+      ...c, 
+      visible: c.visible !== false,
+      wrapText: c.wrapText !== false && globalWrapText // Respect column override
+    }))
   );
 
   const [colWidths, setColWidths] = useState<number[]>(
@@ -136,9 +145,13 @@ export default function GenericTable<T extends Record<string, any>>({
 
   // sync when initialColumns changes (consumer may update)
   useEffect(() => {
-    setColumns(initialColumns.map((c) => ({ ...c, visible: c.visible !== false })));
+    setColumns(initialColumns.map((c) => ({ 
+      ...c, 
+      visible: c.visible !== false,
+      wrapText: c.wrapText !== false && globalWrapText
+    })));
     setColWidths(initialColumns.map((c) => c.width ?? 180));
-  }, [initialColumns]);
+  }, [initialColumns, globalWrapText]);
 
   // sorting
   const [sortBy, setSortBy] = useState<{ id: string; direction: "asc" | "desc" } | null>(null);
@@ -655,7 +668,11 @@ export default function GenericTable<T extends Record<string, any>>({
 
           <button
             onClick={() => {
-              setColumns(initialColumns.map((c) => ({ ...c, visible: c.visible !== false })));
+              setColumns(initialColumns.map((c) => ({ 
+                ...c, 
+                visible: c.visible !== false,
+                wrapText: c.wrapText !== false && globalWrapText
+              })));
               setColWidths(initialColumns.map((c) => c.width ?? 180));
               // Clear filters if server-side
               if (isServerSideFiltering && onServerFilterChange) {
@@ -735,19 +752,25 @@ export default function GenericTable<T extends Record<string, any>>({
                               style={{ width: w, minWidth: w, maxWidth: w }}
                             >
                               {/* header label row */}
-                              <div className="px-3 py-2 flex items-center gap-2 select-none bg-inherit" style={{ height: 48 }}>
-                                <div onClick={() => col.sortable !== false && toggleSort(col.id)} className="flex-1 cursor-pointer font-medium text-gray-700 dark:text-gray-200 truncate">
-                                  {col.label}
-                                  {sortBy?.id === col.id && (
-                                    <span className="ml-1 text-xs">{sortBy.direction === "asc" ? "↑" : "↓"}</span>
-                                  )}
+                              <div 
+                                onClick={() => col.sortable !== false && toggleSort(col.id)} 
+                                className="px-3 py-2 flex items-center gap-2 select-none bg-inherit cursor-pointer" 
+                                style={{ height: 48 }}
+                              >
+                                <div className="flex-1 font-medium text-gray-700 dark:text-gray-200 overflow-hidden">
+                                  <div className="line-clamp-1" title={String(col.label)}>
+                                    {col.label}
+                                  </div>
                                 </div>
+                                {sortBy?.id === col.id && (
+                                  <span className="ml-1 text-xs shrink-0">{sortBy.direction === "asc" ? "↑" : "↓"}</span>
+                                )}
 
                                 {/* visible resize handle */}
                                 <div
                                   role="separator"
                                   onMouseDown={(e) => beginResize(colIndex, e)}
-                                  className="w-2 cursor-col-resize h-6 flex items-center justify-center"
+                                  className="w-2 cursor-col-resize h-6 flex items-center justify-center shrink-0"
                                   title="Drag to resize"
                                 >
                                   <div className="w-[2px] h-6 bg-gray-300 dark:bg-gray-600" />
@@ -786,11 +809,11 @@ export default function GenericTable<T extends Record<string, any>>({
                     <div
                       key={String(rowId)}
                       className={clsx(
-                        "absolute left-0 right-0 px-0 py-0 flex items-center",
+                        "absolute left-0 right-0 px-0 py-0 flex items-stretch",
                         index % 2 === 0 ? "bg-white" : "bg-gray-50",
                         "hover:bg-gray-100 dark:hover:bg-gray-800"
                       )}
-                      style={{ transform: `translateY(${virtualRow.start}px)`, height: virtualRow.size }}
+                      style={{ transform: `translateY(${virtualRow.start}px)`, minHeight: virtualRow.size }}
                     >
                       {/* selection cell */}
                       {selectionMode !== "none" && (
@@ -808,11 +831,25 @@ export default function GenericTable<T extends Record<string, any>>({
                         const colIndex = columns.findIndex((c) => c.id === col.id);
                         const w = colWidths[colIndex] ?? 180;
                         const raw = col.accessor(row);
+                        const shouldWrap = col.wrapText !== false;
+                        
                         return (
                           <div
                             key={col.id}
-                            className="px-3 py-2 truncate"
-                            style={{ width: w, minWidth: w, maxWidth: w }}
+                            className={clsx(
+                              "px-3 py-2",
+                              shouldWrap 
+                                ? "overflow-hidden break-words whitespace-normal" 
+                                : "truncate"
+                            )}
+                            style={{ 
+                              width: w, 
+                              minWidth: w, 
+                              maxWidth: w,
+                              wordBreak: shouldWrap ? 'break-word' : 'normal',
+                              lineHeight: '1.4'
+                            }}
+                            title={!shouldWrap ? String(raw ?? "") : undefined}
                           >
                             {col.Cell ? col.Cell(raw, row, globalIndex) : String(raw ?? "")}
                           </div>
@@ -828,7 +865,11 @@ export default function GenericTable<T extends Record<string, any>>({
                   return (
                     <div
                       key={String(rowId)}
-                      className={clsx("flex items-center px-0 py-0", idx % 2 === 0 ? "bg-white" : "bg-gray-50", "hover:bg-gray-100")}
+                      className={clsx(
+                        "flex items-stretch px-0 py-0", 
+                        idx % 2 === 0 ? "bg-white" : "bg-gray-50", 
+                        "hover:bg-gray-100"
+                      )}
                       style={{ minHeight: 48 }}
                     >
                       {selectionMode !== "none" && (
@@ -845,11 +886,25 @@ export default function GenericTable<T extends Record<string, any>>({
                         const colIndex = columns.findIndex((c) => c.id === col.id);
                         const w = colWidths[colIndex] ?? 180;
                         const raw = col.accessor(row);
+                        const shouldWrap = col.wrapText !== false;
+                        
                         return (
                           <div
                             key={col.id}
-                            className="px-3 py-2 truncate"
-                            style={{ width: w, minWidth: w, maxWidth: w }}
+                            className={clsx(
+                              "px-3 py-2",
+                              shouldWrap 
+                                ? "overflow-hidden break-words whitespace-normal" 
+                                : "truncate"
+                            )}
+                            style={{ 
+                              width: w, 
+                              minWidth: w, 
+                              maxWidth: w,
+                              wordBreak: shouldWrap ? 'break-word' : 'normal',
+                              lineHeight: '1.4'
+                            }}
+                            title={!shouldWrap ? String(raw ?? "") : undefined}
                           >
                             {col.Cell ? col.Cell(raw, row, globalIndex) : String(raw ?? "")}
                           </div>

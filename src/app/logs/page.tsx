@@ -226,26 +226,30 @@ export default function LogsPage() {
         placeholder: 'Filter by phone...'
       }
     },
-    {
-      id: 'message',
-      label: 'Message',
-      accessor: (row: SMSLog) => row.message,
-      Cell: (value: string) => (
-        <div className="space-y-1">
-          <p className="text-gray-600 text-sm line-clamp-2">{value}</p>
-          {value && (
-            <p className="text-xs text-gray-400">
-              {value.length} characters
-            </p>
-          )}
-        </div>
-      ),
-      width: 300,
-      filter: {
-        type: 'text' as const,
-        placeholder: 'Search message...'
-      }
-    },
+{
+  id: 'message',
+  label: 'Message',
+  accessor: (row: SMSLog) => row.message,
+  Cell: (value: string) => (
+    <div className="space-y-1">
+      {/* Remove line-clamp-2 and let it wrap naturally */}
+      <p className="text-gray-600 text-sm whitespace-normal break-words">
+        {value}
+      </p>
+      {value && (
+        <p className="text-xs text-gray-400">
+          {value.length} characters
+        </p>
+      )}
+    </div>
+  ),
+  width: 300,
+  wrapText: true, // This column definitely needs wrapping for long messages
+  filter: {
+    type: 'text' as const,
+    placeholder: 'Search message...'
+  }
+},
     {
       id: 'status',
       label: 'Status',

@@ -125,10 +125,6 @@ export default function DaysPage() {
       errors.day_description = 'Day description is required';
     }
 
-    if (formData.number_of_days === 0) {
-      errors.number_of_days = 'Number of days is required';
-    }
-
     if (formData.is_custom && !formData.custom_date && !formData.custom_rule) {
       errors.custom_rule = 'Either custom date or custom rule is required for custom days';
     }

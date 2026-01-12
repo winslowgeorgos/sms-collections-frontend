@@ -162,3 +162,29 @@ export interface CampaignFormData {
   scheduled_date: string;
   is_active: boolean;
 }
+
+// types/flagged-customer.ts
+export interface FlaggedCustomer {
+  id: string;
+  phone_number: string;
+  customer_name: string;
+  reason_for_flagging: string;
+  is_active: boolean;
+  created_by?: {
+    id: string;
+    username: string;
+  };
+  updated_by?: {
+    id: string;
+    username: string;
+  };
+  approved_by?: {
+    id: string;
+    username: string;
+  };
+  created_at: string;
+  updated_at: string;
+  created_by_username?: string;
+  updated_by_username?: string;
+  approved_by_username?: string;
+}

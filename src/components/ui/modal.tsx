@@ -1,6 +1,7 @@
 // components/ui/modal.tsx
 import React from 'react';
 import { X, Loader } from 'lucide-react';
+import { cn } from '@/lib/utils'; // Optional utility for class merging
 
 interface ModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface ModalProps {
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   isLoading?: boolean;
+  scrollBehavior?: 'inside' | 'outside'; // Choose scrolling behavior
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -18,6 +20,7 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   size = 'md',
   isLoading = false,
+  scrollBehavior = 'inside', // Default to scrolling inside modal
 }) => {
   if (!isOpen) return null;
 
@@ -34,29 +37,54 @@ export const Modal: React.FC<ModalProps> = ({
     }
   };
 
+  const modalContent = (
+    <div className={`bg-white rounded-card w-full ${sizeClasses[size]} mx-auto flex flex-col max-h-[90vh]`}>
+      {isLoading && (
+        <div className="absolute inset-0 bg-white bg-opacity-70 flex items-center justify-center z-10 rounded-card">
+          <Loader className="animate-spin text-accent-600" size={32} />
+        </div>
+      )}
+      
+      {/* Modal Header - Fixed */}
+      <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200">
+        <h2 className="text-xl font-semibold text-gray-900">{title}</h2>
+        <button
+          onClick={onClose}
+          disabled={isLoading}
+          className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+        >
+          <X size={24} />
+        </button>
+      </div>
+      
+      {/* Modal Content - Scrollable */}
+      <div className="flex-grow overflow-y-auto p-6">
+        {children}
+      </div>
+    </div>
+  );
+
+  if (scrollBehavior === 'outside') {
+    return (
+      <div 
+        className="fixed inset-0 z-50 overflow-y-auto"
+        onClick={handleBackdropClick}
+      >
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" />
+          {modalContent}
+        </div>
+      </div>
+    );
+  }
+
+  // Default: 'inside' scroll behavior
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
       onClick={handleBackdropClick}
     >
-      <div className={`bg-white rounded-card w-full ${sizeClasses[size]} mx-4 relative`}>
-        {isLoading && (
-          <div className="absolute inset-0 bg-white bg-opacity-70 flex items-center justify-center z-10 rounded-card">
-            <Loader className="animate-spin text-accent-600" size={32} />
-          </div>
-        )}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">{title}</h2>
-          <button
-            onClick={onClose}
-            disabled={isLoading}
-            className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
-          >
-            <X size={24} />
-          </button>
-        </div>
-        <div className="p-6">{children}</div>
-      </div>
+      {modalContent}
     </div>
   );
 };

@@ -10,14 +10,17 @@ import {
   Users, 
   MessageSquare, 
   Package,
-  // Campaign,
   Calendar,
   Filter,
   Download,
   RefreshCw,
   ArrowUp,
   ArrowDown,
-  Minus
+  Minus,
+  ChevronDown,
+  Database,
+  Shield,
+  Clock
 } from 'lucide-react';
 import { apiClient } from '@/lib/api';
 import { 
@@ -157,6 +160,16 @@ interface DeliveryMetrics {
   };
 }
 
+interface CacheData {
+  data: AnalyticsData;
+  predictiveInsights: PredictiveInsights;
+  deliveryMetrics: DeliveryMetrics;
+  timestamp: number;
+  period: string;
+  startDate: string;
+  endDate: string;
+}
+
 // Color constants for charts
 const CHART_COLORS = {
   primary: '#3b82f6',
@@ -176,6 +189,61 @@ const STATUS_COLORS = {
   SCHEDULED: CHART_COLORS.accent,
 };
 
+// Cache key generator
+const getCacheKey = (period: string, startDate: string, endDate: string) => {
+  return `analytics_cache_${period}_${startDate}_${endDate}`;
+};
+
+// Check if cache is expired (after 10:00 AM daily)
+const isCacheExpired = (timestamp: number): boolean => {
+  const now = new Date();
+  const cacheDate = new Date(timestamp);
+  
+  // If it's a different day, cache is expired
+  if (now.getDate() !== cacheDate.getDate() || 
+      now.getMonth() !== cacheDate.getMonth() || 
+      now.getFullYear() !== cacheDate.getFullYear()) {
+    return true;
+  }
+  
+  // If current time is after 10:00 AM and cache was created before 10:00 AM
+  const currentHour = now.getHours();
+  const cacheHour = cacheDate.getHours();
+  
+  if (currentHour >= 10 && cacheHour < 10) {
+    return true;
+  }
+  
+  // Cache is valid for 1 hour after 10:00 AM, then refresh
+  if (currentHour >= 10) {
+    const cacheAgeInHours = (now.getTime() - timestamp) / (1000 * 60 * 60);
+    return cacheAgeInHours > 1;
+  }
+  
+  return false;
+};
+
+// Clear expired caches
+const clearExpiredCaches = () => {
+  const now = new Date();
+  const cachePrefix = 'analytics_cache_';
+  
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(cachePrefix)) {
+      try {
+        const cacheData = JSON.parse(localStorage.getItem(key) || '{}');
+        if (cacheData.timestamp && isCacheExpired(cacheData.timestamp)) {
+          localStorage.removeItem(key);
+        }
+      } catch (error) {
+        console.error('Error clearing cache:', error);
+        localStorage.removeItem(key);
+      }
+    }
+  }
+};
+
 export default function AnalyticsPage() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [predictiveInsights, setPredictiveInsights] = useState<PredictiveInsights | null>(null);
@@ -184,27 +252,157 @@ export default function AnalyticsPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [period, setPeriod] = useState('daily');
   const [activeTab, setActiveTab] = useState('overview');
+  
+  // Add state variables for date range
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [useCustomDates, setUseCustomDates] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [forceRefresh, setForceRefresh] = useState(false);
+  const [isUsingCache, setIsUsingCache] = useState(false);
+  const [cacheTimestamp, setCacheTimestamp] = useState<number | null>(null);
+
+  // Initialize default dates on component mount
+  useEffect(() => {
+    const initializeDates = () => {
+      const today = new Date();
+      
+      if (period === 'daily') {
+        // Default to today's date for both start and end
+        const todayStr = today.toISOString().split('T')[0];
+        setStartDate(todayStr);
+        setEndDate(todayStr);
+      } else if (period === 'weekly') {
+        // Find Sunday of the current week
+        const sunday = new Date(today);
+        sunday.setDate(today.getDate() - today.getDay());
+        const sundayStr = sunday.toISOString().split('T')[0];
+        
+        // End date is Saturday (6 days after Sunday)
+        const saturday = new Date(sunday);
+        saturday.setDate(sunday.getDate() + 6);
+        const saturdayStr = saturday.toISOString().split('T')[0];
+        
+        setStartDate(sundayStr);
+        setEndDate(saturdayStr);
+      } else if (period === 'monthly') {
+        // First day of current month
+        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+        const firstDayStr = firstDay.toISOString().split('T')[0];
+        
+        // Last day of current month
+        const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        const lastDayStr = lastDay.toISOString().split('T')[0];
+        
+        setStartDate(firstDayStr);
+        setEndDate(lastDayStr);
+      }
+    };
+
+    initializeDates();
+    // Clear expired caches on component mount
+    clearExpiredCaches();
+  }, [period]);
 
   useEffect(() => {
     fetchAnalyticsData();
-  }, [period]);
+  }, [period, startDate, endDate, useCustomDates, forceRefresh]);
 
   const fetchAnalyticsData = async () => {
     try {
       setIsLoading(true);
+      const cacheKey = getCacheKey(period, startDate, endDate);
+      
+      // Check cache first (unless force refresh is requested)
+      if (!forceRefresh) {
+        const cachedData = localStorage.getItem(cacheKey);
+        if (cachedData) {
+          try {
+            const cacheData: CacheData = JSON.parse(cachedData);
+            
+            // Check if cache is still valid
+            if (!isCacheExpired(cacheData.timestamp)) {
+              setAnalyticsData(cacheData.data);
+              setPredictiveInsights(cacheData.predictiveInsights);
+              setDeliveryMetrics(cacheData.deliveryMetrics);
+              setIsUsingCache(true);
+              setCacheTimestamp(cacheData.timestamp);
+              setIsLoading(false);
+              return;
+            } else {
+              // Cache expired, remove it
+              localStorage.removeItem(cacheKey);
+            }
+          } catch (error) {
+            console.error('Error parsing cache:', error);
+            localStorage.removeItem(cacheKey);
+          }
+        }
+      }
+      
+      // Fetch fresh data
       const client = apiClient.getClient();
       
+      // Build query parameters
+      const params = new URLSearchParams({
+        period: period,
+      });
+      
+      // Add custom dates if they're set and we're using them
+      if (useCustomDates && startDate && endDate) {
+        params.append('start_date', startDate);
+        params.append('end_date', endDate);
+      }
+      
       const [analyticsRes, insightsRes, deliveryRes] = await Promise.all([
-        client.get(`/sms-analytics/?period=${period}`),
+        client.get(`/sms-analytics/?${params.toString()}`),
         client.get('/sms-analytics/predictive_insights/'),
         client.get('/sms-analytics/delivery_metrics/'),
       ]);
 
+      const data = {
+        data: analyticsRes.data,
+        predictiveInsights: insightsRes.data,
+        deliveryMetrics: deliveryRes.data,
+        timestamp: Date.now(),
+        period,
+        startDate,
+        endDate
+      };
+
+      // Cache the results
+      localStorage.setItem(cacheKey, JSON.stringify(data));
+      
       setAnalyticsData(analyticsRes.data);
       setPredictiveInsights(insightsRes.data);
       setDeliveryMetrics(deliveryRes.data);
+      setIsUsingCache(false);
+      setCacheTimestamp(Date.now());
+      
+      // Reset force refresh flag
+      if (forceRefresh) {
+        setForceRefresh(false);
+      }
     } catch (error) {
       console.error('Error fetching analytics data:', error);
+      
+      // Try to fall back to cache if available
+      if (!forceRefresh) {
+        const cacheKey = getCacheKey(period, startDate, endDate);
+        const cachedData = localStorage.getItem(cacheKey);
+        if (cachedData) {
+          try {
+            const cacheData: CacheData = JSON.parse(cachedData);
+            setAnalyticsData(cacheData.data);
+            setPredictiveInsights(cacheData.predictiveInsights);
+            setDeliveryMetrics(cacheData.deliveryMetrics);
+            setIsUsingCache(true);
+            setCacheTimestamp(cacheData.timestamp);
+          } catch (cacheError) {
+            console.error('Error falling back to cache:', cacheError);
+          }
+        }
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -213,11 +411,92 @@ export default function AnalyticsPage() {
 
   const handleRefresh = () => {
     setIsRefreshing(true);
-    fetchAnalyticsData();
+    setForceRefresh(true);
   };
 
   const handlePeriodChange = (newPeriod: string) => {
     setPeriod(newPeriod);
+    setUseCustomDates(false);
+    setShowDatePicker(false);
+    
+    const today = new Date();
+    
+    if (newPeriod === 'daily') {
+      const todayStr = today.toISOString().split('T')[0];
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (newPeriod === 'weekly') {
+      const sunday = new Date(today);
+      sunday.setDate(today.getDate() - today.getDay());
+      const sundayStr = sunday.toISOString().split('T')[0];
+      
+      const saturday = new Date(sunday);
+      saturday.setDate(sunday.getDate() + 6);
+      const saturdayStr = saturday.toISOString().split('T')[0];
+      
+      setStartDate(sundayStr);
+      setEndDate(saturdayStr);
+    } else if (newPeriod === 'monthly') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      const firstDayStr = firstDay.toISOString().split('T')[0];
+      
+      const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      const lastDayStr = lastDay.toISOString().split('T')[0];
+      
+      setStartDate(firstDayStr);
+      setEndDate(lastDayStr);
+    } else if (newPeriod === 'custom') {
+      setUseCustomDates(true);
+      setShowDatePicker(true);
+    }
+  };
+
+  const handleCustomDateRange = () => {
+    if (startDate && endDate && new Date(startDate) <= new Date(endDate)) {
+      setUseCustomDates(true);
+      setPeriod('custom');
+      setShowDatePicker(false);
+      fetchAnalyticsData();
+    } else {
+      alert('Please select valid dates. Start date must be before or equal to end date.');
+    }
+  };
+
+  const handleQuickDateRange = (range: '7days' | '30days' | '90days' | 'year') => {
+    const today = new Date();
+    const end = today.toISOString().split('T')[0];
+    let start = new Date();
+    
+    if (range === '7days') {
+      start.setDate(today.getDate() - 7);
+    } else if (range === '30days') {
+      start.setDate(today.getDate() - 30);
+    } else if (range === '90days') {
+      start.setDate(today.getDate() - 90);
+    } else if (range === 'year') {
+      start.setFullYear(today.getFullYear() - 1);
+    }
+    
+    const startStr = start.toISOString().split('T')[0];
+    setStartDate(startStr);
+    setEndDate(end);
+    setUseCustomDates(true);
+    setPeriod('custom');
+    setShowDatePicker(false);
+  };
+
+  const clearAllCache = () => {
+    const cachePrefix = 'analytics_cache_';
+    
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(cachePrefix)) {
+        localStorage.removeItem(key);
+      }
+    }
+    
+    // Force refresh current data
+    setForceRefresh(true);
   };
 
   // Format timeline data for charts
@@ -237,10 +516,10 @@ export default function AnalyticsPage() {
 
   // Format time of day data
   const timeOfDayData = analyticsData?.time_analysis ? [
-    { name: 'Morning (6-12)', value: analyticsData.time_analysis.messages_by_time_of_day.morning },
-    { name: 'Afternoon (12-18)', value: analyticsData.time_analysis.messages_by_time_of_day.afternoon },
-    { name: 'Evening (18-24)', value: analyticsData.time_analysis.messages_by_time_of_day.evening },
-    { name: 'Night (0-6)', value: analyticsData.time_analysis.messages_by_time_of_day.night },
+    { name: 'Morning (6-12)', value: analyticsData?.time_analysis?.messages_by_time_of_day?.morning },
+    { name: 'Afternoon (12-18)', value: analyticsData?.time_analysis?.messages_by_time_of_day?.afternoon },
+    { name: 'Evening (18-24)', value: analyticsData?.time_analysis?.messages_by_time_of_day?.evening },
+    { name: 'Night (0-6)', value: analyticsData?.time_analysis?.messages_by_time_of_day?.night },
   ] : [];
 
   // Format peak hours data
@@ -293,7 +572,7 @@ export default function AnalyticsPage() {
         
         <div className="flex items-center gap-3">
           <div className="flex bg-gray-100 rounded-lg p-1">
-            {['daily', 'weekly', 'monthly'].map((p) => (
+            {['daily', 'weekly', 'monthly', 'custom'].map((p) => (
               <button
                 key={p}
                 onClick={() => handlePeriodChange(p)}
@@ -308,6 +587,102 @@ export default function AnalyticsPage() {
             ))}
           </div>
           
+          {/* Date Range Picker */}
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDatePicker(!showDatePicker)}
+              className="flex items-center gap-2"
+            >
+              <Calendar className="h-4 w-4" />
+              {useCustomDates && startDate && endDate ? (
+                <>
+                  {startDate} to {endDate}
+                  {period !== 'custom' && ` (${period})`}
+                </>
+              ) : (
+                `${period.charAt(0).toUpperCase() + period.slice(1)}`
+              )}
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+            
+            {showDatePicker && (
+              <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50 p-4">
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="font-medium text-sm mb-2">Quick Date Ranges</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleQuickDateRange('7days')}
+                        className="text-xs"
+                      >
+                        Last 7 Days
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleQuickDateRange('30days')}
+                        className="text-xs"
+                      >
+                        Last 30 Days
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleQuickDateRange('90days')}
+                        className="text-xs"
+                      >
+                        Last 90 Days
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleQuickDateRange('year')}
+                        className="text-xs"
+                      >
+                        Last Year
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <div className="border-t pt-4">
+                    <h4 className="font-medium text-sm mb-2">Custom Date Range</h4>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-600 w-20">From:</label>
+                        <input
+                          type="date"
+                          value={startDate}
+                          onChange={(e) => setStartDate(e.target.value)}
+                          className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-md"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-600 w-20">To:</label>
+                        <input
+                          type="date"
+                          value={endDate}
+                          onChange={(e) => setEndDate(e.target.value)}
+                          className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded-md"
+                        />
+                      </div>
+                      <Button
+                        onClick={handleCustomDateRange}
+                        size="sm"
+                        className="mt-2"
+                      >
+                        Apply Custom Range
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          
           <Button
             onClick={handleRefresh}
             variant="outline"
@@ -315,13 +690,78 @@ export default function AnalyticsPage() {
             disabled={isRefreshing}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
+            {forceRefresh ? 'Fetching...' : 'Refresh'}
+          </Button>
+          
+          <Button 
+            onClick={clearAllCache}
+            variant="outline"
+            size="sm"
+          >
+            <Database className="h-4 w-4 mr-2" />
+            Clear Cache
           </Button>
           
           <Button size="sm">
             <Download className="h-4 w-4 mr-2" />
             Export
           </Button>
+        </div>
+      </div>
+
+      {/* Cache Status Banner */}
+      {isUsingCache && (
+        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-blue-600" />
+              <span className="text-sm font-medium text-blue-900">
+                Showing cached data
+              </span>
+              {cacheTimestamp && (
+                <span className="text-xs text-blue-600">
+                  (Last updated: {new Date(cacheTimestamp).toLocaleTimeString()})
+                </span>
+              )}
+            </div>
+            <Button
+              onClick={handleRefresh}
+              variant="outline"
+              size="sm"
+              className="border-blue-200 text-blue-700 hover:bg-blue-100"
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Refresh for latest data
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Date Range Display */}
+      <div className={`border rounded-lg p-3 ${isUsingCache ? 'border-blue-100 bg-blue-50' : 'border-green-100 bg-green-50'}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {isUsingCache ? (
+              <Clock className="h-4 w-4 text-blue-600" />
+            ) : (
+              <Shield className="h-4 w-4 text-green-600" />
+            )}
+            <span className={`text-sm font-medium ${isUsingCache ? 'text-blue-900' : 'text-green-900'}`}>
+              {isUsingCache ? 'Cached Analysis' : 'Live Analysis'} •{' '}
+              {useCustomDates ? 'Custom Date Range' : `${period.charAt(0).toUpperCase() + period.slice(1)} Analysis`}
+            </span>
+          </div>
+          <div className={`text-sm ${isUsingCache ? 'text-blue-700' : 'text-green-700'}`}>
+            {analyticsData.filters.start_date && analyticsData.filters.end_date ? (
+              <>
+                {new Date(analyticsData.filters.start_date).toLocaleDateString()} - {new Date(analyticsData.filters.end_date).toLocaleDateString()}
+              </>
+            ) : (
+              <>
+                {startDate} to {endDate}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
