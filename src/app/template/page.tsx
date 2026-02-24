@@ -10,6 +10,7 @@ import { apiClient } from '@/lib/api';
 import { Template, Product, Day } from '@/types';
 import { Plus, Edit, Trash2, Search, Filter } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
+import { usePermissions } from '@/context/permission-context';
 
 interface TemplateFormData {
   template_name: string;
@@ -22,6 +23,13 @@ interface TemplateFormData {
 }
 
 export default function TemplatesPage() {
+  const { hasAccess } = usePermissions();
+
+  // Permission shortcuts – adjust codenames as needed
+  const canCreate = hasAccess('add_template');
+  const canChange = hasAccess('change_template');
+  const canDelete = hasAccess('delete_template');
+
   const [templates, setTemplates] = useState<Template[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [days, setDays] = useState<Day[]>([]);
@@ -82,13 +90,13 @@ export default function TemplatesPage() {
   };
 
   const handleOpenCreate = () => {
+    if (!canCreate) return; // Guard
     resetForm();
     setIsModalOpen(true);
   };
 
-
-
   const handleOpenDelete = (template: Template) => {
+    if (!canDelete) return; // Guard
     setDeleteTemplate(template);
     setIsDeleteModalOpen(true);
   };
@@ -126,67 +134,63 @@ export default function TemplatesPage() {
     return Object.keys(errors).length === 0;
   };
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  if (!validateForm()) return;
-
-  setIsSubmitting(true);
-  try {
-    const client = apiClient.getClient();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     
-    // IMPORTANT: Send the data EXACTLY as it comes from TemplateForm
-    // Don't rename fields, just pass through what TemplateForm gives you
-    const submitData = {
-      template_name: formData.template_name,
-      template_desc: formData.template_desc,
-      scheduled_datetime: formData.scheduled_datetime || null,
-      is_active: formData.is_active,
-      is_campaign_template: formData.is_campaign_template,
-      // These should be arrays of IDs, which is what TemplateForm sends
-      product_ids: formData.product_ids,
-      day_ids: formData.day_ids,
-    };
+    if (!validateForm()) return;
 
-    console.log('Submitting template data:', JSON.stringify(submitData, null, 2));
+    setIsSubmitting(true);
+    try {
+      const client = apiClient.getClient();
+      
+      const submitData = {
+        template_name: formData.template_name,
+        template_desc: formData.template_desc,
+        scheduled_datetime: formData.scheduled_datetime || null,
+        is_active: formData.is_active,
+        is_campaign_template: formData.is_campaign_template,
+        product_ids: formData.product_ids,
+        day_ids: formData.day_ids,
+      };
 
-    if (editingTemplate) {
-      await client.put(`/templates/${editingTemplate.id}/`, submitData);
-    } else {
-      await client.post('/templates/', submitData);
+      console.log('Submitting template data:', JSON.stringify(submitData, null, 2));
+
+      if (editingTemplate) {
+        await client.put(`/templates/${editingTemplate.id}/`, submitData);
+      } else {
+        await client.post('/templates/', submitData);
+      }
+
+      await fetchData();
+      handleCloseModal();
+    } catch (error: any) {
+      console.error('Error saving template:', error);
+      if (error.response?.data) {
+        console.error('API error response:', error.response.data);
+        setFormErrors(error.response.data);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
+  };
 
-    await fetchData();
-    handleCloseModal();
-  } catch (error: any) {
-    console.error('Error saving template:', error);
-    if (error.response?.data) {
-      console.error('API error response:', error.response.data);
-      // Handle API validation errors
-      setFormErrors(error.response.data);
-    }
-  } finally {
-    setIsSubmitting(false);
-  }
-};
-
-// Also update the handleOpenEdit function to properly initialize the form:
-const handleOpenEdit = (template: Template) => {
-  console.log('Editing template:', template);
-  
-  setFormData({
-    template_name: template.template_name,
-    product_ids: template.products?.map(p => p.id) || template.product_ids || [],
-    day_ids: template.days?.map(d => d.id) || template.day_ids || [],
-    template_desc: template.template_desc,
-    scheduled_datetime: template.scheduled_datetime || '',
-    is_active: template.is_active,
-    is_campaign_template: template.is_campaign_template || false,
-  });
-  
-  setEditingTemplate(template);
-  setIsModalOpen(true);
-};
+  const handleOpenEdit = (template: Template) => {
+    if (!canChange) return; // Guard
+    console.log('Editing template:', template);
+    
+    setFormData({
+      template_name: template.template_name,
+      product_ids: template.products?.map(p => p.id) || template.product_ids || [],
+      day_ids: template.days?.map(d => d.id) || template.day_ids || [],
+      template_desc: template.template_desc,
+      scheduled_datetime: template.scheduled_datetime || '',
+      is_active: template.is_active,
+      is_campaign_template: template.is_campaign_template || false,
+    });
+    
+    setEditingTemplate(template);
+    setIsModalOpen(true);
+  };
 
   const handleDelete = async () => {
     if (!deleteTemplate) return;
@@ -344,20 +348,26 @@ const handleOpenEdit = (template: Template) => {
       accessor: (row: Template) => row,
       Cell: (value: Template) => (
         <div className="flex space-x-2">
-          <button
-            onClick={() => handleOpenEdit(value)}
-            className="text-accent-600 hover:text-accent-700 transition-colors"
-            title="Edit template"
-          >
-            <Edit size={16} />
-          </button>
-          <button
-            onClick={() => handleOpenDelete(value)}
-            className="text-error-600 hover:text-error-700 transition-colors"
-            title="Delete template"
-          >
-            <Trash2 size={16} />
-          </button>
+          {/* Edit button – requires change permission */}
+          {canChange && (
+            <button
+              onClick={() => handleOpenEdit(value)}
+              className="text-accent-600 hover:text-accent-700 transition-colors"
+              title="Edit template"
+            >
+              <Edit size={16} />
+            </button>
+          )}
+          {/* Delete button – requires delete permission */}
+          {canDelete && (
+            <button
+              onClick={() => handleOpenDelete(value)}
+              className="text-error-600 hover:text-error-700 transition-colors"
+              title="Delete template"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       ),
       width: 100,
@@ -371,10 +381,13 @@ const handleOpenEdit = (template: Template) => {
           <h1 className="text-3xl font-bold text-gray-900">Templates</h1>
           <p className="text-gray-600 mt-2">Manage SMS templates for different products and days</p>
         </div>
-        <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
-          <Plus size={20} className="mr-2" />
-          Add Template
-        </Button>
+        {/* Add Template button – requires create permission */}
+        {canCreate && (
+          <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
+            <Plus size={20} className="mr-2" />
+            Add Template
+          </Button>
+        )}
       </div>
 
       {/* Templates Table */}

@@ -6,6 +6,8 @@ import { ThemeProvider } from "@/providers/theme-provider";
 import './globals.css';
 import { AuthProvider } from '@/context/auth-context';
 import { ClientLayoutWrapper } from './client-layout-wrapper';
+import { PermissionProvider } from '@/context/permission-context'; // Add this import
+import { RouteGuard } from '@/components/auth/route-guard';
 
 const inter = Inter({
     subsets: ["latin"],
@@ -33,9 +35,15 @@ export default function RootLayout({
         <RouteProvider>
           <ThemeProvider>
             <AuthProvider>
-              <ClientLayoutWrapper>
-                {children}
-              </ClientLayoutWrapper>
+              
+              <PermissionProvider>
+                <RouteGuard>
+                <ClientLayoutWrapper>
+                  {children}
+                </ClientLayoutWrapper>
+                 </RouteGuard>
+              </PermissionProvider>
+             
             </AuthProvider>
           </ThemeProvider>
         </RouteProvider>

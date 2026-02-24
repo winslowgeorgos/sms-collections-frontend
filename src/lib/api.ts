@@ -1,7 +1,7 @@
 // lib/api.ts
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 import { API_BASE_URL, AUTH_TOKEN_KEY, USER_KEY } from './constants';
-import { AuthTokens } from '@/types';
+import { AuthTokens, UserDetailsResponse } from '@/types';
 
 class APIClient {
   private client: AxiosInstance;
@@ -193,6 +193,18 @@ class APIClient {
       throw error;
     }
   }
+
+  // Inside the APIClient class, add this method:
+
+public async getUserDetails(): Promise<UserDetailsResponse> {
+  try {
+    const response = await this.client.get('/users/me/');
+    return response.data;
+  } catch (error) {
+    console.error('Failed to fetch user details:', error);
+    throw error;
+  }
+}
 
   public async logoutUser(): Promise<void> {
     try {

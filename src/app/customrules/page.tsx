@@ -10,6 +10,7 @@ import { apiClient } from '@/lib/api';
 import { CustomRule, Product } from '@/types';
 import { Plus, Edit, Trash2, Search } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
+import { usePermissions } from '@/context/permission-context'; // <-- ADDED
 
 interface CustomRuleFormData {
   rule_name: string;
@@ -47,6 +48,13 @@ const OPERATOR_CHOICES = [
 ];
 
 export default function CustomRulesPage() {
+  const { hasAccess } = usePermissions(); // <-- ADDED
+
+  // Permission shortcuts – adjust codenames as needed
+  const canCreate = hasAccess('add_customrule');
+  const canChange = hasAccess('change_customrule');
+  const canDelete = hasAccess('delete_customrule');
+
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -104,11 +112,13 @@ export default function CustomRulesPage() {
   };
 
   const handleOpenCreate = () => {
+    if (!canCreate) return; // Guard
     resetForm();
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (rule: CustomRule) => {
+    if (!canChange) return; // Guard
     setFormData({
       rule_name: rule.rule_name,
       column_name: rule.column_name,
@@ -123,6 +133,7 @@ export default function CustomRulesPage() {
   };
 
   const handleOpenDelete = (rule: CustomRule) => {
+    if (!canDelete) return; // Guard
     setDeleteRule(rule);
     setIsDeleteModalOpen(true);
   };
@@ -295,20 +306,26 @@ export default function CustomRulesPage() {
       accessor: (row: CustomRule) => row,
       Cell: (value: CustomRule) => (
         <div className="flex space-x-2">
-          <button
-            onClick={() => handleOpenEdit(value)}
-            className="text-accent-600 hover:text-accent-700 transition-colors"
-            title="Edit rule"
-          >
-            <Edit size={16} />
-          </button>
-          <button
-            onClick={() => handleOpenDelete(value)}
-            className="text-error-600 hover:text-error-700 transition-colors"
-            title="Delete rule"
-          >
-            <Trash2 size={16} />
-          </button>
+          {/* Edit button – requires change permission */}
+          {canChange && (
+            <button
+              onClick={() => handleOpenEdit(value)}
+              className="text-accent-600 hover:text-accent-700 transition-colors"
+              title="Edit rule"
+            >
+              <Edit size={16} />
+            </button>
+          )}
+          {/* Delete button – requires delete permission */}
+          {canDelete && (
+            <button
+              onClick={() => handleOpenDelete(value)}
+              className="text-error-600 hover:text-error-700 transition-colors"
+              title="Delete rule"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       ),
       width: 100,
@@ -322,20 +339,20 @@ export default function CustomRulesPage() {
           <h1 className="text-3xl font-bold text-gray-900">Custom Rules</h1>
           <p className="text-gray-600 mt-2">Manage custom rules for SMS template conditions</p>
         </div>
- 
       </div>
-
 
       {/* Custom Rules Table */}
       <Card>
         <CardHeader>
-        <div className="flex items-center justify-between w-full">
-
-          <h2 className="text-xl font-semibold text-gray-900">All Custom Rules</h2>
-                 <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
-          <Plus size={20} className="mr-2" />
-          Add Rule
-        </Button>
+          <div className="flex items-center justify-between w-full">
+            <h2 className="text-xl font-semibold text-gray-900">All Custom Rules</h2>
+            {/* Add Rule button – requires create permission */}
+            {canCreate && (
+              <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
+                <Plus size={20} className="mr-2" />
+                Add Rule
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>

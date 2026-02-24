@@ -76,6 +76,11 @@ export function SidebarNavigationSectionsSubheadings({
     router.refresh();
   };
 
+  // get user data from localStorage (if needed for display)
+  const userData = typeof window !== "undefined" ? localStorage.getItem("user_details") : null;
+  const user = userData ? JSON.parse(userData)?.user : null;
+
+
   return (
     <div className="flex h-full w-64 flex-col bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800">
       {/* Logo Section */}
@@ -166,10 +171,13 @@ export function SidebarNavigationSectionsSubheadings({
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-              User Name
+              <em>User Name: </em> {user ? user?.username : "Guest"}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-              user@example.com
+             <em> Role: </em> {user ? user?.role : "N/A"}
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 wrap">
+             <em> Email: </em> {user ? user?.email : "N/A"}
             </p>
           </div>
         </div>

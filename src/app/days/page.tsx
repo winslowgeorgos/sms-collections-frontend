@@ -10,6 +10,7 @@ import { apiClient } from '@/lib/api';
 import { Day, CustomRule } from '@/types';
 import { Plus, Edit, Trash2, Search } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
+import { usePermissions } from '@/context/permission-context'; // <-- ADDED
 
 interface DayFormData {
   day_name: string;
@@ -22,6 +23,13 @@ interface DayFormData {
 }
 
 export default function DaysPage() {
+  const { hasAccess } = usePermissions(); // <-- ADDED
+
+  // Permission shortcuts – adjust codenames as needed
+  const canCreate = hasAccess('add_days');
+  const canChange = hasAccess('change_days');
+  const canDelete = hasAccess('delete_days');
+
   const [days, setDays] = useState<Day[]>([]);
   const [customRules, setCustomRules] = useState<CustomRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -81,11 +89,13 @@ export default function DaysPage() {
   };
 
   const handleOpenCreate = () => {
+    if (!canCreate) return; // Guard
     resetForm();
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (day: Day) => {
+    if (!canChange) return; // Guard
     setFormData({
       day_name: day.day_name,
       day_description: day.day_description,
@@ -100,6 +110,7 @@ export default function DaysPage() {
   };
 
   const handleOpenDelete = (day: Day) => {
+    if (!canDelete) return; // Guard
     setDeleteDay(day);
     setIsDeleteModalOpen(true);
   };
@@ -259,20 +270,26 @@ export default function DaysPage() {
       accessor: (row: Day) => row,
       Cell: (value: Day) => (
         <div className="flex space-x-2">
-          <button
-            onClick={() => handleOpenEdit(value)}
-            className="text-accent-600 hover:text-accent-700 transition-colors"
-            title="Edit day"
-          >
-            <Edit size={16} />
-          </button>
-          <button
-            onClick={() => handleOpenDelete(value)}
-            className="text-error-600 hover:text-error-700 transition-colors"
-            title="Delete day"
-          >
-            <Trash2 size={16} />
-          </button>
+          {/* Edit button – requires change permission */}
+          {canChange && (
+            <button
+              onClick={() => handleOpenEdit(value)}
+              className="text-accent-600 hover:text-accent-700 transition-colors"
+              title="Edit day"
+            >
+              <Edit size={16} />
+            </button>
+          )}
+          {/* Delete button – requires delete permission */}
+          {canDelete && (
+            <button
+              onClick={() => handleOpenDelete(value)}
+              className="text-error-600 hover:text-error-700 transition-colors"
+              title="Delete day"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       ),
       width: 100,
@@ -286,20 +303,21 @@ export default function DaysPage() {
           <h1 className="text-3xl font-bold text-gray-900">Days</h1>
           <p className="text-gray-600 mt-2">Manage days configuration for SMS scheduling</p>
         </div>
-  
       </div>
-
 
       {/* Days Table */}
       <Card>
         <CardHeader>
-        <div className="flex items-center justify-between w-full">
-          <h2 className="text-xl font-semibold text-gray-900">All Days</h2>
-                <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
-          <Plus size={20} className="mr-2" />
-          Add Day
-        </Button>
-        </div>
+          <div className="flex items-center justify-between w-full">
+            <h2 className="text-xl font-semibold text-gray-900">All Days</h2>
+            {/* Add Day button – requires create permission */}
+            {canCreate && (
+              <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
+                <Plus size={20} className="mr-2" />
+                Add Day
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (

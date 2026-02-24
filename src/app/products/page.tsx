@@ -10,6 +10,7 @@ import { apiClient } from '@/lib/api';
 import { Product } from '@/types';
 import { Plus, Edit, Trash2, Search } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
+import { usePermissions } from '@/context/permission-context'; // <-- ADDED
 
 interface ProductFormData {
   product_name: string;
@@ -20,6 +21,13 @@ interface ProductFormData {
 }
 
 export default function ProductsPage() {
+  const { hasAccess } = usePermissions(); // <-- ADDED
+
+  // Permission shortcuts – adjust codenames as needed
+  const canCreate = hasAccess('add_product');
+  const canChange = hasAccess('change_product');
+  const canDelete = hasAccess('delete_product');
+
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -67,11 +75,13 @@ export default function ProductsPage() {
   };
 
   const handleOpenCreate = () => {
+    if (!canCreate) return; // Guard
     resetForm();
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (product: Product) => {
+    if (!canChange) return; // Guard
     setFormData({
       product_name: product.product_name,
       product_description: product.product_description,
@@ -84,6 +94,7 @@ export default function ProductsPage() {
   };
 
   const handleOpenDelete = (product: Product) => {
+    if (!canDelete) return; // Guard
     setDeleteProduct(product);
     setIsDeleteModalOpen(true);
   };
@@ -237,20 +248,26 @@ export default function ProductsPage() {
       accessor: (row: Product) => row,
       Cell: (value: Product) => (
         <div className="flex space-x-2">
-          <button
-            onClick={() => handleOpenEdit(value)}
-            className="text-accent-600 hover:text-accent-700 transition-colors"
-            title="Edit product"
-          >
-            <Edit size={16} />
-          </button>
-          <button
-            onClick={() => handleOpenDelete(value)}
-            className="text-error-600 hover:text-error-700 transition-colors"
-            title="Delete product"
-          >
-            <Trash2 size={16} />
-          </button>
+          {/* Edit button – requires change permission */}
+          {canChange && (
+            <button
+              onClick={() => handleOpenEdit(value)}
+              className="text-accent-600 hover:text-accent-700 transition-colors"
+              title="Edit product"
+            >
+              <Edit size={16} />
+            </button>
+          )}
+          {/* Delete button – requires delete permission */}
+          {canDelete && (
+            <button
+              onClick={() => handleOpenDelete(value)}
+              className="text-error-600 hover:text-error-700 transition-colors"
+              title="Delete product"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       ),
       width: 100,
@@ -264,20 +281,20 @@ export default function ProductsPage() {
           <h1 className="text-3xl font-bold text-gray-900">Products</h1>
           <p className="text-gray-600 mt-2">Manage loan products and their configurations</p>
         </div>
-    
       </div>
-
 
       {/* Products Table */}
       <Card>
         <CardHeader>
-          
           <div className="flex items-center justify-between w-full">
             <h2 className="text-xl font-semibold text-gray-900">All Products</h2>
-                <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
-          <Plus size={20} className="mr-2" />
-          Add Product
-        </Button>
+            {/* Add Product button – requires create permission */}
+            {canCreate && (
+              <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
+                <Plus size={20} className="mr-2" />
+                Add Product
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>

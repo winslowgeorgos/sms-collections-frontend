@@ -9,6 +9,7 @@ import { FormInput } from '@/components/forms/FormInput';
 import { apiClient } from '@/lib/api';
 import { Plus, Edit, Trash2, Search, Play, BarChart3, Eye, Send, AlertCircle, Info } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
+import { usePermissions } from '@/context/permission-context'; // <-- ADDED
 
 interface CustomCampaignFormData {
   campaign_name: string;
@@ -46,20 +47,13 @@ interface ProcessedCampaign {
   };
 }
 
-interface Template {
-  id: string;
-  template_name: string;
-  template_desc: string;
-  is_campaign_template: boolean;
-}
-
 interface Campaign {
   id: string;
   campaign_name: string;
   template_content: string;
-  template?: Template | null;  // Optional, computed field
-  template_id?: string | null;  // From processing_errors
-  template_name?: string;  // Computed
+  template?: Template | null;
+  template_id?: string | null;
+  template_name?: string;
   template_content_preview?: string;
   status: 'DRAFT' | 'PROCESSING' | 'PROCESSED' | 'SENT' | 'FAILED';
   created_at: string;
@@ -69,13 +63,22 @@ interface Campaign {
   customer_file: string;
   processing_errors: any;
   is_active: boolean;
-  created_by : string;
-  updated_at : string;
+  created_by: string;
+  updated_at: string;
 }
 
-
-
 export default function CustomCampaignsPage() {
+  const { hasAccess } = usePermissions(); // <-- ADDED
+
+  // Permission shortcuts – adjust codenames as needed
+  const canCreate = hasAccess('add_customcampaign');
+  const canChange = hasAccess('change_customcampaign');
+  const canProcess = hasAccess('process_customcampaign');
+  const canSend = hasAccess('send_customcampaign');
+  const canApprove = hasAccess('approve_customcampaign');
+  const canDelete = hasAccess('delete_customcampaign');
+  const canView = hasAccess('view_customcampaign');
+
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -105,239 +108,199 @@ export default function CustomCampaignsPage() {
     scheduled_date: '',
   });
 
+  const [retryCount, setRetryCount] = useState(0);
+  const [lastFetchTime, setLastFetchTime] = useState<number | null>(null);
+
   useEffect(() => {
     fetchCampaigns();
     fetchTemplates();
   }, []);
 
-  // const fetchCampaigns = async () => {
-  //   try {
-  //     setIsLoading(true);
-  //     const client = apiClient.getClient();
-  //     const response = await client.get('/campaigns/list_campaigns/');
-  //     setCampaigns(response?.data?.campaigns || []);
-  //   } catch (error) {
-  //     console.error('Error fetching campaigns:', error);
-  //     alert('Failed to load campaigns. Please try again.');
-  //   } finally {
-  //     setIsLoading(false);
-  //   }
-  // };
-
-// Add these state variables at the top of your component
-const [retryCount, setRetryCount] = useState(0);
-const [lastFetchTime, setLastFetchTime] = useState<number | null>(null);
-
-// Enhanced fetchCampaigns with caching and retry
-const fetchCampaigns = async (forceRefresh = false) => {
-  // Check cache if not forcing refresh
-  if (!forceRefresh && lastFetchTime && (Date.now() - lastFetchTime < 30000)) { // 30 second cache
-    console.log('Using cached campaigns data');
-    return;
-  }
-  
-  try {
-    setIsLoading(true);
-    const client = apiClient.getClient();
-    
-    let response;
-    let campaignsData: any[] = [];
-    let usedEndpoint = '';
-    
-    // Array of endpoints to try in order
-    const endpoints = [
-      { 
-        url: '/custom-campaigns/', 
-        name: 'custom-campaigns',
-        transform: (data: any) => data?.results || data || []
-      },
-      { 
-        url: '/campaigns/list_campaigns/', 
-        name: 'campaign-processor',
-        transform: (data: any) => data?.campaigns?.map(transformCampaignFromProcessor) || []
-      }
-    ];
-    
-    // Try each endpoint
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`Trying endpoint: ${endpoint.name}`);
-        response = await client.get(endpoint.url, {
-          timeout: 10000, // 10 second timeout
-          params: endpoint.name === 'custom-campaigns' ? {
-            ordering: '-created_at'
-          } : {}
-        });
-        
-        campaignsData = endpoint.transform(response.data);
-        usedEndpoint = endpoint.name;
-        console.log(`Successfully fetched from ${endpoint.name}: ${campaignsData.length} campaigns`);
-        break; // Exit loop on success
-        
-      } catch (endpointError: any) {
-        console.warn(`Endpoint ${endpoint.name} failed:`, endpointError.message);
-        continue; // Try next endpoint
-      }
+  const fetchCampaigns = async (forceRefresh = false) => {
+    if (!forceRefresh && lastFetchTime && (Date.now() - lastFetchTime < 30000)) {
+      console.log('Using cached campaigns data');
+      return;
     }
     
-    // If all endpoints failed
-    if (!usedEndpoint) {
-      throw new Error('All campaign endpoints failed');
-    }
-    
-    // Transform data based on which endpoint was used
-    const transformedCampaigns = campaignsData.map((campaign: any) => {
-      if (usedEndpoint === 'campaign-processor') {
-        return transformCampaignFromProcessor(campaign);
+    try {
+      setIsLoading(true);
+      const client = apiClient.getClient();
+      
+      let response;
+      let campaignsData: any[] = [];
+      let usedEndpoint = '';
+      
+      const endpoints = [
+        { 
+          url: '/custom-campaigns/', 
+          name: 'custom-campaigns',
+          transform: (data: any) => data?.results || data || []
+        },
+        { 
+          url: '/campaigns/list_campaigns/', 
+          name: 'campaign-processor',
+          transform: (data: any) => data?.campaigns?.map(transformCampaignFromProcessor) || []
+        }
+      ];
+      
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`Trying endpoint: ${endpoint.name}`);
+          response = await client.get(endpoint.url, {
+            timeout: 10000,
+            params: endpoint.name === 'custom-campaigns' ? {
+              ordering: '-created_at'
+            } : {}
+          });
+          
+          campaignsData = endpoint.transform(response.data);
+          usedEndpoint = endpoint.name;
+          console.log(`Successfully fetched from ${endpoint.name}: ${campaignsData.length} campaigns`);
+          break;
+        } catch (endpointError: any) {
+          console.warn(`Endpoint ${endpoint.name} failed:`, endpointError.message);
+          continue;
+        }
       }
-      return transformCampaignFromCustom(campaign);
-    });
-    
-    // Sort by creation date (newest first)
-    const sortedCampaigns = transformedCampaigns.sort((a, b) => 
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-    
-    // Update state
-    setCampaigns(sortedCampaigns);
-    setLastFetchTime(Date.now());
-    setRetryCount(0); // Reset retry count on success
-    
-    // Log analytics
-    logCampaignAnalytics(sortedCampaigns, usedEndpoint);
-    
-  } catch (error: any) {
-    console.error('All campaign fetch attempts failed:', error);
-    
-    // Retry logic (max 3 retries)
-    if (retryCount < 3) {
-      const nextRetryCount = retryCount + 1;
-      setRetryCount(nextRetryCount);
       
-      console.log(`Retrying fetch... (attempt ${nextRetryCount}/3)`);
+      if (!usedEndpoint) {
+        throw new Error('All campaign endpoints failed');
+      }
       
-      // Exponential backoff
-      const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
+      const transformedCampaigns = campaignsData.map((campaign: any) => {
+        if (usedEndpoint === 'campaign-processor') {
+          return transformCampaignFromProcessor(campaign);
+        }
+        return transformCampaignFromCustom(campaign);
+      });
       
-      setTimeout(() => {
-        fetchCampaigns(true);
-      }, delay);
+      const sortedCampaigns = transformedCampaigns.sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
       
+      setCampaigns(sortedCampaigns);
+      setLastFetchTime(Date.now());
+      setRetryCount(0);
+      
+      logCampaignAnalytics(sortedCampaigns, usedEndpoint);
+      
+    } catch (error: any) {
+      console.error('All campaign fetch attempts failed:', error);
+      
+      if (retryCount < 3) {
+        const nextRetryCount = retryCount + 1;
+        setRetryCount(nextRetryCount);
+        
+        console.log(`Retrying fetch... (attempt ${nextRetryCount}/3)`);
+        
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
+        
+        setTimeout(() => {
+          fetchCampaigns(true);
+        }, delay);
+        
+      } else {
+        showCampaignFetchError(error);
+        setCampaigns([]);
+      }
+      
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const transformCampaignFromCustom = (campaign: any): Campaign => {
+    return {
+      id: campaign.id,
+      campaign_name: campaign.campaign_name,
+      template_content: campaign.template_content,
+      template: campaign.template || (campaign.template_id ? {
+        id: campaign.template_id,
+        template_name: campaign.template_name || 'Unknown Template',
+        template_desc: campaign.template_content || '',
+        is_campaign_template: true
+      } : null),
+      template_id: campaign.template_id,
+      template_name: campaign.template_name,
+      template_content_preview: campaign.template_content_preview || campaign.template_content?.substring(0, 100) + '...',
+      status: campaign.status,
+      created_at: campaign.created_at,
+      sent_count: campaign.sent_count || 0,
+      failed_count: campaign.failed_count || 0,
+      scheduled_date: campaign.scheduled_date,
+      customer_file: campaign.customer_file,
+      processing_errors: campaign.processing_errors,
+      is_active: campaign.is_active !== undefined ? campaign.is_active : true,
+      created_by: campaign.created_by,
+      updated_at: campaign.updated_at
+    };
+  };
+
+  const transformCampaignFromProcessor = (campaign: any): Campaign => {
+    return {
+      id: campaign.id,
+      campaign_name: campaign.campaign_name,
+      template_content: campaign.template_content_preview || '',
+      template: campaign.template_id ? {
+        id: campaign.template_id,
+        template_name: campaign.template_name || 'Unknown Template',
+        template_desc: campaign.template_content_preview || '',
+        is_campaign_template: true
+      } : null,
+      template_id: campaign.template_id,
+      template_name: campaign.template_name,
+      template_content_preview: campaign.template_content_preview,
+      status: campaign.status,
+      created_at: campaign.created_at,
+      sent_count: campaign.sent_count || 0,
+      failed_count: campaign.failed_count || 0,
+      scheduled_date: campaign.scheduled_date,
+      customer_file: campaign.customer_file,
+      processing_errors: campaign.processing_errors,
+      is_active: true,
+      created_by: campaign.created_by,
+      updated_at: campaign.updated_at || campaign.created_at
+    };
+  };
+
+  const logCampaignAnalytics = (campaigns: Campaign[], endpoint: string) => {
+    const stats = {
+      total: campaigns.length,
+      byStatus: campaigns.reduce((acc, c) => {
+        acc[c.status] = (acc[c.status] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+      withTemplate: campaigns.filter(c => c.template).length,
+      withTemplateId: campaigns.filter(c => c.template_id).length,
+      endpointUsed: endpoint
+    };
+    
+    console.log('Campaign Analytics:', stats);
+  };
+
+  const showCampaignFetchError = (error: any) => {
+    let userMessage = 'Unable to load campaigns. ';
+    
+    if (error.message.includes('network') || error.code === 'NETWORK_ERROR') {
+      userMessage += 'Please check your internet connection and try again.';
+    } else if (error.response?.status === 401) {
+      userMessage += 'Your session may have expired. Please log in again.';
+    } else if (error.response?.status === 403) {
+      userMessage += 'You do not have permission to view campaigns.';
+    } else if (error.response?.status === 404) {
+      userMessage += 'Campaign service is currently unavailable.';
     } else {
-      // Show error after all retries failed
-      showCampaignFetchError(error);
-      setCampaigns([]); // Set empty array
+      userMessage += 'Please try again later or contact support.';
     }
     
-  } finally {
-    setIsLoading(false);
-  }
-};
-
-// Helper function to transform campaign from custom-campaigns endpoint
-const transformCampaignFromCustom = (campaign: any): Campaign => {
-  return {
-    id: campaign.id,
-    campaign_name: campaign.campaign_name,
-    template_content: campaign.template_content,
-    template: campaign.template || (campaign.template_id ? {
-      id: campaign.template_id,
-      template_name: campaign.template_name || 'Unknown Template',
-      template_desc: campaign.template_content || '',
-      is_campaign_template: true
-    } : null),
-    template_id: campaign.template_id,
-    template_name: campaign.template_name,
-    template_content_preview: campaign.template_content_preview || campaign.template_content?.substring(0, 100) + '...',
-    status: campaign.status,
-    created_at: campaign.created_at,
-    sent_count: campaign.sent_count || 0,
-    failed_count: campaign.failed_count || 0,
-    scheduled_date: campaign.scheduled_date,
-    customer_file: campaign.customer_file,
-    processing_errors: campaign.processing_errors,
-    is_active: campaign.is_active !== undefined ? campaign.is_active : true,
-    created_by: campaign.created_by,
-    updated_at: campaign.updated_at
+    console.error('Campaign fetch error:', error);
+    alert(userMessage);
   };
-};
-
-// Helper function to transform campaign from campaign-processor endpoint
-const transformCampaignFromProcessor = (campaign: any): Campaign => {
-  return {
-    id: campaign.id,
-    campaign_name: campaign.campaign_name,
-    template_content: campaign.template_content_preview || '',
-    template: campaign.template_id ? {
-      id: campaign.template_id,
-      template_name: campaign.template_name || 'Unknown Template',
-      template_desc: campaign.template_content_preview || '',
-      is_campaign_template: true
-    } : null,
-    template_id: campaign.template_id,
-    template_name: campaign.template_name,
-    template_content_preview: campaign.template_content_preview,
-    status: campaign.status,
-    created_at: campaign.created_at,
-    sent_count: campaign.sent_count || 0,
-    failed_count: campaign.failed_count || 0,
-    scheduled_date: campaign.scheduled_date,
-    customer_file: campaign.customer_file,
-    processing_errors: campaign.processing_errors,
-    is_active: true, // Assume active for legacy campaigns
-    created_by: campaign.created_by,
-    updated_at: campaign.updated_at || campaign.created_at
-  };
-};
-
-// Helper function to log analytics
-const logCampaignAnalytics = (campaigns: Campaign[], endpoint: string) => {
-  const stats = {
-    total: campaigns.length,
-    byStatus: campaigns.reduce((acc, c) => {
-      acc[c.status] = (acc[c.status] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>),
-    withTemplate: campaigns.filter(c => c.template).length,
-    withTemplateId: campaigns.filter(c => c.template_id).length,
-    endpointUsed: endpoint
-  };
-  
-  console.log('Campaign Analytics:', stats);
-  
-  // You could send this to analytics service here
-  // analytics.track('campaigns_fetched', stats);
-};
-
-// Helper function to show error
-const showCampaignFetchError = (error: any) => {
-  let userMessage = 'Unable to load campaigns. ';
-  
-  if (error.message.includes('network') || error.code === 'NETWORK_ERROR') {
-    userMessage += 'Please check your internet connection and try again.';
-  } else if (error.response?.status === 401) {
-    userMessage += 'Your session may have expired. Please log in again.';
-  } else if (error.response?.status === 403) {
-    userMessage += 'You do not have permission to view campaigns.';
-  } else if (error.response?.status === 404) {
-    userMessage += 'Campaign service is currently unavailable.';
-  } else {
-    userMessage += 'Please try again later or contact support.';
-  }
-  
-  // Show toast notification instead of alert for better UX
-  console.error('Campaign fetch error:', error);
-  // You could use a toast library here
-  alert(userMessage);
-};
-
-
 
   const fetchTemplates = async () => {
     setIsLoadingTemplates(true);
     try {
       const client = apiClient.getClient();
-      // Fetch only templates marked as campaign templates
       const response = await client.get('/templates/', {
         params: {
           is_campaign_template: 'true',
@@ -345,7 +308,6 @@ const showCampaignFetchError = (error: any) => {
         }
       });
       
-      // Handle both paginated and non-paginated responses
       const templatesData = response?.data?.results || response?.data || [];
       setTemplates(templatesData);
       
@@ -377,164 +339,30 @@ const showCampaignFetchError = (error: any) => {
     setIsModalOpen(true);
   };
 
-  // const handleOpenEdit = (campaign: Campaign) => {
-  //   // Only allow editing if campaign is not sent
-  //   if (campaign.status === 'SENT') {
-  //     alert('Cannot edit a campaign that has already been sent');
-  //     return;
-  //   }
+  const handleOpenEdit = (campaign: Campaign) => {
+    if (campaign.status === 'SENT') {
+      alert('Cannot edit a campaign that has already been sent');
+      return;
+    }
 
-  //   setFormData({
-  //     campaign_name: campaign.campaign_name,
-  //     template_id: campaign.template?.id || '',
-  //     customer_file: null,
-  //     scheduled_date: campaign.scheduled_date || '',
-  //   });
+    setFormData({
+      campaign_name: campaign.campaign_name,
+      template_id: campaign.template?.id || campaign.template_id || '',
+      customer_file: null,
+      scheduled_date: campaign.scheduled_date || '',
+    });
     
-  //   // Set template preview if template exists
-  //   if (campaign.template) {
-  //     setSelectedTemplatePreview(campaign.template.template_desc);
-  //   } else if (campaign.template_content_preview) {
-  //     // For backward compatibility with existing campaigns
-  //     setSelectedTemplatePreview(campaign.template_content_preview);
-  //   }
-    
-  //   setEditingCampaign(campaign);
-  //   setIsModalOpen(true);
-  // };
-
-
-// Add this helper function
-const debugCampaign = (campaign: any) => {
-  console.log('Campaign data:', {
-    id: campaign.id,
-    name: campaign.campaign_name,
-    hasTemplate: !!campaign.template,
-    templateId: campaign.template?.id,
-    templateName: campaign.template?.template_name,
-    templateContent: campaign.template_content_preview,
-    status: campaign.status
-  });
-};
-
-// Update the handleOpenEdit to include debug
-// Update the handleOpenEdit function
-const handleOpenEdit = (campaign: Campaign) => {
-  if (campaign.status === 'SENT') {
-    alert('Cannot edit a campaign that has already been sent');
-    return;
-  }
-
-  setFormData({
-    campaign_name: campaign.campaign_name,
-    template_id: campaign.template?.id || campaign.template_id || '',
-    customer_file: null,
-    scheduled_date: campaign.scheduled_date || '',
-  });
-  
-  // Set template preview
-  if (campaign.template) {
-    setSelectedTemplatePreview(campaign.template.template_desc);
-  } else if (campaign.template_content) {
-    setSelectedTemplatePreview(campaign.template_content);
-  }
-  
-  setEditingCampaign(campaign);
-  setIsModalOpen(true);
-};
-
-// Update the handleSubmit function
-
-
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  if (!validateForm()) return;
-
-  setIsSubmitting(true);
-  try {
-    const client = apiClient.getClient();
-    
-    // Get the selected template to get its content
-    const selectedTemplate = templates.find(t => t.id === formData.template_id);
-    if (!selectedTemplate) {
-      throw new Error('Please select a valid template');
+    if (campaign.template) {
+      setSelectedTemplatePreview(campaign.template.template_desc);
+    } else if (campaign.template_content) {
+      setSelectedTemplatePreview(campaign.template_content);
     }
     
-    if (editingCampaign) {
-      // For editing, use PATCH with FormData
-      const submitData = new FormData();
-      submitData.append('campaign_name', formData.campaign_name);
-      submitData.append('template_id', formData.template_id);
-      submitData.append('template_content', selectedTemplate.template_desc); // Add template content
-      submitData.append('scheduled_date', formData.scheduled_date);
-      
-      if (formData.customer_file) {
-        submitData.append('customer_file', formData.customer_file);
-      }
-      
-      const response = await client.patch(`/custom-campaigns/${editingCampaign.id}/`, submitData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      if (response.data) {
-        await fetchCampaigns();
-        handleCloseModal();
-        alert('Campaign updated successfully!');
-      }
-    } else {
-      // For creation, always use FormData
-      const submitData = new FormData();
-      submitData.append('campaign_name', formData.campaign_name);
-      submitData.append('template_id', formData.template_id);
-      submitData.append('template_content', selectedTemplate.template_desc); // Add template content
-      submitData.append('scheduled_date', formData.scheduled_date);
-      
-      if (formData.customer_file) {
-        submitData.append('customer_file', formData.customer_file);
-      } else {
-        throw new Error('Customer file is required');
-      }
-      
-      const response = await client.post('/custom-campaigns/', submitData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      if (response.data) {
-        await fetchCampaigns();
-        handleCloseModal();
-        alert('Campaign created successfully!');
-      }
-    }
-  } catch (error: any) {
-    console.error('Error saving campaign:', error);
-    
-    if (error.response?.data) {
-      const errorData = error.response.data;
-      const errors: Record<string, string> = {};
-      
-      if (typeof errorData === 'object') {
-        Object.keys(errorData).forEach(key => {
-          if (Array.isArray(errorData[key])) {
-            errors[key] = errorData[key].join(', ');
-          } else {
-            errors[key] = errorData[key];
-          }
-        });
-        setFormErrors(errors);
-      }
-      
-      alert('Error: ' + (errorData.error || errorData.template_content || 'Failed to save campaign'));
-    } else {
-      alert('Failed to save campaign: ' + (error.message || 'Please try again.'));
-    }
-  } finally {
-    setIsSubmitting(false);
-  }
-};
+    setEditingCampaign(campaign);
+    setIsModalOpen(true);
+  };
 
   const handleOpenDelete = (campaign: Campaign) => {
-    // Only allow deletion if campaign is not sent
     if (campaign.status === 'SENT') {
       alert('Cannot delete a campaign that has already been sent');
       return;
@@ -544,7 +372,6 @@ const handleSubmit = async (e: React.FormEvent) => {
   };
 
   const handleOpenProcess = async (campaign: Campaign) => {
-    // Only allow processing if campaign is in DRAFT or FAILED state
     if (campaign.status === 'SENT') {
       alert('Campaign has already been sent');
       return;
@@ -555,7 +382,6 @@ const handleSubmit = async (e: React.FormEvent) => {
       return;
     }
     
-    // Check if campaign has a template
     if (!campaign.template && !campaign.template_content_preview) {
       alert('Campaign must have a template before processing');
       return;
@@ -582,7 +408,6 @@ const handleSubmit = async (e: React.FormEvent) => {
   };
 
   const handleSendCampaign = async (campaign: Campaign) => {
-    // Only allow sending if campaign is PROCESSED
     if (campaign.status !== 'PROCESSED') {
       alert('Campaign must be processed before sending');
       return;
@@ -601,7 +426,7 @@ const handleSubmit = async (e: React.FormEvent) => {
 
       if (response.data.status === 'success') {
         alert(`Campaign sent successfully! Success: ${response.data.results.success}, Failed: ${response.data.results.failed}`);
-        await fetchCampaigns(); // Refresh campaigns list
+        await fetchCampaigns();
       } else {
         alert('Failed to send campaign: ' + response.data.error);
       }
@@ -636,84 +461,117 @@ const handleSubmit = async (e: React.FormEvent) => {
     setCampaignPayload(null);
   };
 
-const validateForm = (): boolean => {
-  const errors: Record<string, string> = {};
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {};
 
-  if (!formData.campaign_name.trim()) {
-    errors.campaign_name = 'Campaign name is required';
-  }
-
-  if (!formData.template_id) {
-    errors.template_id = 'Template selection is required';
-  } else {
-    // Verify the selected template exists
-    const selectedTemplate = templates.find(t => t.id === formData.template_id);
-    if (!selectedTemplate) {
-      errors.template_id = 'Selected template is invalid';
+    if (!formData.campaign_name.trim()) {
+      errors.campaign_name = 'Campaign name is required';
     }
-  }
 
-  if (!editingCampaign && !formData.customer_file) {
-    errors.customer_file = 'Customer file is required';
-  }
+    if (!formData.template_id) {
+      errors.template_id = 'Template selection is required';
+    } else {
+      const selectedTemplate = templates.find(t => t.id === formData.template_id);
+      if (!selectedTemplate) {
+        errors.template_id = 'Selected template is invalid';
+      }
+    }
 
-  if (!formData.scheduled_date) {
-    errors.scheduled_date = 'Scheduled date is required';
-  }
+    if (!editingCampaign && !formData.customer_file) {
+      errors.customer_file = 'Customer file is required';
+    }
 
-  setFormErrors(errors);
-  return Object.keys(errors).length === 0;
-};
+    if (!formData.scheduled_date) {
+      errors.scheduled_date = 'Scheduled date is required';
+    }
 
-  // const handleSubmit = async (e: React.FormEvent) => {
-  //   e.preventDefault();
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     
-  //   if (!validateForm()) return;
+    if (!validateForm()) return;
 
-  //   setIsSubmitting(true);
-  //   try {
-  //     const client = apiClient.getClient();
+    setIsSubmitting(true);
+    try {
+      const client = apiClient.getClient();
       
-  //     const submitData = new FormData();
-  //     submitData.append('campaign_name', formData.campaign_name);
-  //     submitData.append('template_id', formData.template_id);
-  //     submitData.append('scheduled_date', formData.scheduled_date);
+      const selectedTemplate = templates.find(t => t.id === formData.template_id);
+      if (!selectedTemplate) {
+        throw new Error('Please select a valid template');
+      }
       
-  //     if (formData.customer_file) {
-  //       submitData.append('customer_file', formData.customer_file);
-  //     }
-
-  //     if (editingCampaign) {
-  //       // For editing, use the custom campaign endpoint
-  //       await client.put(`/custom-campaigns/${editingCampaign.id}/`, submitData, {
-  //         headers: { 'Content-Type': 'multipart/form-data' }
-  //       });
-  //     } else {
-  //       // For creating, use the campaign processor endpoint
-  //       await client.post('/campaigns/', submitData, {
-  //         headers: { 'Content-Type': 'multipart/form-data' }
-  //       });
-  //     }
-
-  //     await fetchCampaigns();
-  //     handleCloseModal();
-  //     alert(editingCampaign ? 'Campaign updated successfully!' : 'Campaign created successfully!');
-  //   } catch (error: any) {
-  //     console.error('Error saving campaign:', error);
-  //     if (error.response?.data) {
-  //       setFormErrors(error.response.data);
-  //       alert('Error: ' + (error.response.data.error || 'Failed to save campaign'));
-  //     } else {
-  //       alert('Failed to save campaign. Please try again.');
-  //     }
-  //   } finally {
-  //     setIsSubmitting(false);
-  //   }
-  // };
-
-
-  // app/custom-campaigns/page.tsx - Updated handleSubmit function
-
+      if (editingCampaign) {
+        const submitData = new FormData();
+        submitData.append('campaign_name', formData.campaign_name);
+        submitData.append('template_id', formData.template_id);
+        submitData.append('template_content', selectedTemplate.template_desc);
+        submitData.append('scheduled_date', formData.scheduled_date);
+        
+        if (formData.customer_file) {
+          submitData.append('customer_file', formData.customer_file);
+        }
+        
+        const response = await client.patch(`/custom-campaigns/${editingCampaign.id}/`, submitData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        
+        if (response.data) {
+          await fetchCampaigns();
+          handleCloseModal();
+          alert('Campaign updated successfully!');
+        }
+      } else {
+        const submitData = new FormData();
+        submitData.append('campaign_name', formData.campaign_name);
+        submitData.append('template_id', formData.template_id);
+        submitData.append('template_content', selectedTemplate.template_desc);
+        submitData.append('scheduled_date', formData.scheduled_date);
+        
+        if (formData.customer_file) {
+          submitData.append('customer_file', formData.customer_file);
+        } else {
+          throw new Error('Customer file is required');
+        }
+        
+        const response = await client.post('/custom-campaigns/', submitData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        
+        if (response.data) {
+          await fetchCampaigns();
+          handleCloseModal();
+          alert('Campaign created successfully!');
+        }
+      }
+    } catch (error: any) {
+      console.error('Error saving campaign:', error);
+      
+      if (error.response?.data) {
+        const errorData = error.response.data;
+        const errors: Record<string, string> = {};
+        
+        if (typeof errorData === 'object') {
+          Object.keys(errorData).forEach(key => {
+            if (Array.isArray(errorData[key])) {
+              errors[key] = errorData[key].join(', ');
+            } else {
+              errors[key] = errorData[key];
+            }
+          });
+          setFormErrors(errors);
+        }
+        
+        alert('Error: ' + (errorData.error || errorData.template_content || 'Failed to save campaign'));
+      } else {
+        alert('Failed to save campaign: ' + (error.message || 'Please try again.'));
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleDelete = async () => {
     if (!deleteCampaign) return;
@@ -733,78 +591,46 @@ const validateForm = (): boolean => {
     }
   };
 
-  // const handleProcessCampaign = async () => {
-  //   if (!processCampaign) return;
-
-  //   setIsProcessing(true);
-  //   try {
-  //     const client = apiClient.getClient();
-  //     const response = await client.post('/campaigns/process_campaign/', {
-  //       campaign_id: processCampaign.id
-  //     });
-
-  //     if (response.data.status === 'success') {
-  //       setProcessedCampaign(response.data);
-  //       setCampaignStats({
-  //         total_messages: response.data.payload_info.count,
-  //         success_count: 0, // Will be updated after sending
-  //         failure_count: 0
-  //       });
-  //       await fetchCampaigns(); // Refresh to get updated status
-  //       alert('Campaign processed successfully!');
-  //     } else {
-  //       alert('Failed to process campaign: ' + response.data.error);
-  //     }
-  //   } catch (error: any) {
-  //     console.error('Error processing campaign:', error);
-  //     alert('Error processing campaign: ' + (error.response?.data?.error || error.message));
-  //   } finally {
-  //     setIsProcessing(false);
-  //   }
-  // };
-
-
   const handleProcessCampaign = async () => {
-  if (!processCampaign) return;
+    if (!processCampaign) return;
 
-  setIsProcessing(true);
-  try {
-    const client = apiClient.getClient();
-    
-    // Check if campaign has a template
-    if (!processCampaign.template && !processCampaign.template_content_preview) {
-      alert('Campaign must have a template before processing. Please edit the campaign to assign a template.');
-      return;
-    }
-    
-    const response = await client.post('/campaigns/process_campaign/', {
-      campaign_id: processCampaign.id
-    });
-
-    if (response.data.status === 'success') {
-      setProcessedCampaign(response.data);
-      setCampaignStats({
-        total_messages: response.data.payload_info.count,
-        success_count: 0,
-        failure_count: 0
+    setIsProcessing(true);
+    try {
+      const client = apiClient.getClient();
+      
+      if (!processCampaign.template && !processCampaign.template_content_preview) {
+        alert('Campaign must have a template before processing. Please edit the campaign to assign a template.');
+        return;
+      }
+      
+      const response = await client.post('/campaigns/process_campaign/', {
+        campaign_id: processCampaign.id
       });
-      await fetchCampaigns(); // Refresh to get updated status
-      alert('Campaign processed successfully!');
-    } else {
-      alert('Failed to process campaign: ' + response.data.error);
+
+      if (response.data.status === 'success') {
+        setProcessedCampaign(response.data);
+        setCampaignStats({
+          total_messages: response.data.payload_info.count,
+          success_count: 0,
+          failure_count: 0
+        });
+        await fetchCampaigns();
+        alert('Campaign processed successfully!');
+      } else {
+        alert('Failed to process campaign: ' + response.data.error);
+      }
+    } catch (error: any) {
+      console.error('Error processing campaign:', error);
+      
+      if (error.response?.data?.error?.includes('No template selected')) {
+        alert('This campaign has no template assigned. Please edit the campaign to assign a template first.');
+      } else {
+        alert('Error processing campaign: ' + (error.response?.data?.error || error.message));
+      }
+    } finally {
+      setIsProcessing(false);
     }
-  } catch (error: any) {
-    console.error('Error processing campaign:', error);
-    
-    if (error.response?.data?.error?.includes('No template selected')) {
-      alert('This campaign has no template assigned. Please edit the campaign to assign a template first.');
-    } else {
-      alert('Error processing campaign: ' + (error.response?.data?.error || error.message));
-    }
-  } finally {
-    setIsProcessing(false);
-  }
-};
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -831,28 +657,24 @@ const validateForm = (): boolean => {
     }
   };
 
-const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-  const templateId = e.target.value;
-  setFormData(prev => ({
-    ...prev,
-    template_id: templateId
-  }));
+  const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const templateId = e.target.value;
+    setFormData(prev => ({
+      ...prev,
+      template_id: templateId
+    }));
 
-  // Update preview
-  const selectedTemplate = templates.find(t => t.id === templateId);
-  if (selectedTemplate) {
-    setSelectedTemplatePreview(selectedTemplate.template_desc);
-    
-    // Also update template_content in formData if needed
-    // This ensures we have the content when submitting
-  } else {
-    setSelectedTemplatePreview('');
-  }
+    const selectedTemplate = templates.find(t => t.id === templateId);
+    if (selectedTemplate) {
+      setSelectedTemplatePreview(selectedTemplate.template_desc);
+    } else {
+      setSelectedTemplatePreview('');
+    }
 
-  if (formErrors.template_id) {
-    setFormErrors(prev => ({ ...prev, template_id: '' }));
-  }
-};
+    if (formErrors.template_id) {
+      setFormErrors(prev => ({ ...prev, template_id: '' }));
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -900,24 +722,24 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
       width: 200,
     },
     {
-    id: 'template',
-    label: 'Template',
-    accessor: (row: Campaign) => row.template?.template_name || row.template_name || 'No template',
-    Cell: (value: string, row: Campaign) => (
-      <div>
-        <p className="text-gray-900 font-medium">{value}</p>
-        {(row.template?.template_desc || row.template_content_preview) && (
-          <p className="text-gray-600 text-xs mt-1 line-clamp-1">
-            {row.template?.template_desc || row.template_content_preview}
-          </p>
-        )}
-        {row.template_id && !row.template && (
-          <p className="text-xs text-blue-600">Template ID: {row.template_id.substring(0, 8)}...</p>
-        )}
-      </div>
-    ),
-    width: 250,
-  },
+      id: 'template',
+      label: 'Template',
+      accessor: (row: Campaign) => row.template?.template_name || row.template_name || 'No template',
+      Cell: (value: string, row: Campaign) => (
+        <div>
+          <p className="text-gray-900 font-medium">{value}</p>
+          {(row.template?.template_desc || row.template_content_preview) && (
+            <p className="text-gray-600 text-xs mt-1 line-clamp-1">
+              {row.template?.template_desc || row.template_content_preview}
+            </p>
+          )}
+          {row.template_id && !row.template && (
+            <p className="text-xs text-blue-600">Template ID: {row.template_id.substring(0, 8)}...</p>
+          )}
+        </div>
+      ),
+      width: 250,
+    },
     {
       id: 'status',
       label: 'Status',
@@ -979,17 +801,19 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
       accessor: (row: Campaign) => row,
       Cell: (value: Campaign) => (
         <div className="flex space-x-2">
-          {/* View Button - Always visible */}
-          <button
-            onClick={() => handleOpenView(value)}
-            className="text-blue-600 hover:text-blue-700 transition-colors p-1 rounded hover:bg-blue-50"
-            title="View campaign payload"
-          >
-            <Eye size={16} />
-          </button>
+          {/* View Button – requires view permission */}
+          {canView && (
+            <button
+              onClick={() => handleOpenView(value)}
+              className="text-blue-600 hover:text-blue-700 transition-colors p-1 rounded hover:bg-blue-50"
+              title="View campaign payload"
+            >
+              <Eye size={16} />
+            </button>
+          )}
 
-          {/* Process Button - Only for DRAFT and FAILED status */}
-          {(value.status === 'DRAFT' || value.status === 'FAILED') && (
+          {/* Process Button – requires change permission and appropriate status */}
+          {canProcess && (value.status === 'DRAFT' || value.status === 'FAILED') && (
             <button
               onClick={() => handleOpenProcess(value)}
               className="text-green-600 hover:text-green-700 transition-colors p-1 rounded hover:bg-green-50"
@@ -999,8 +823,8 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
             </button>
           )}
 
-          {/* Send Button - Only for PROCESSED status */}
-          {value.status === 'PROCESSED' && (
+          {/* Send Button – requires change permission and processed status */}
+          {canSend && value.status === 'PROCESSED' && (
             <button
               onClick={() => handleSendCampaign(value)}
               className="text-purple-600 hover:text-purple-700 transition-colors p-1 rounded hover:bg-purple-50"
@@ -1011,8 +835,8 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
             </button>
           )}
 
-          {/* Edit Button - Only for DRAFT, FAILED, and PROCESSED status (not SENT) */}
-          {value.status !== 'SENT' && (
+          {/* Edit Button – requires change permission and not sent */}
+          {canChange && value.status !== 'SENT' && (
             <button
               onClick={() => handleOpenEdit(value)}
               className="text-yellow-600 hover:text-yellow-700 transition-colors p-1 rounded hover:bg-yellow-50"
@@ -1022,8 +846,8 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
             </button>
           )}
 
-          {/* Delete Button - Only for DRAFT, FAILED, and PROCESSED status (not SENT) */}
-          {value.status !== 'SENT' && (
+          {/* Delete Button – requires delete permission and not sent */}
+          {canDelete && value.status !== 'SENT' && (
             <button
               onClick={() => handleOpenDelete(value)}
               className="text-red-600 hover:text-red-700 transition-colors p-1 rounded hover:bg-red-50"
@@ -1045,31 +869,35 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
           <h1 className="text-3xl font-bold text-gray-900">Custom Campaigns</h1>
           <p className="text-gray-600 mt-2">Manage custom SMS campaigns and bulk messaging</p>
         </div>
-        <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
-          <Plus size={20} className="mr-2" />
-          Create Campaign
-        </Button>
-<Button
-  onClick={() => fetchCampaigns(true)}
-  variant="outline"
-  size="sm"
-  className="ml-2"
-  disabled={isLoading}
->
-  {isLoading ? (
-    <>
-      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-900 mr-2"></div>
-      Refreshing...
-    </>
-  ) : (
-    <>
-      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-      </svg>
-      Refresh
-    </>
-  )}
-</Button>
+        <div className="flex space-x-2">
+          {/* Create Campaign button – requires add permission */}
+          {canCreate && (
+            <Button onClick={handleOpenCreate} className="bg-accent-600 hover:bg-accent-700">
+              <Plus size={20} className="mr-2" />
+              Create Campaign
+            </Button>
+          )}
+          <Button
+            onClick={() => fetchCampaigns(true)}
+            variant="outline"
+            size="sm"
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <>
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-900 mr-2"></div>
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Search Bar */}
@@ -1177,7 +1005,6 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
               <p className="mt-1 text-sm text-error-500">{formErrors.template_id}</p>
             )}
             
-            {/* Template Preview */}
             {selectedTemplatePreview && (
               <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
                 <p className="text-sm font-medium text-gray-700 mb-1">Template Preview:</p>
@@ -1370,209 +1197,201 @@ const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
       </Modal>
 
       {/* View Campaign Payload Modal */}
-{/* View Campaign Payload Modal */}
-<Modal
-  isOpen={isViewModalOpen}
-  onClose={handleCloseViewModal}
-  title="Campaign Details"
-  size="xl"
->
-  <div className="space-y-4">
-    <div className="bg-gray-50 rounded-lg p-4">
-      <h4 className="font-semibold text-gray-800 mb-3">Campaign Information</h4>
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <div>
-          <strong className="text-gray-600">Name:</strong>
-          <p className="font-medium">{viewCampaign?.campaign_name}</p>
-        </div>
-        <div>
-          <strong className="text-gray-600">Status:</strong>
-          <span className={`ml-2 px-2 py-1 rounded-full text-xs ${getStatusColor(viewCampaign?.status || '')}`}>
-            {viewCampaign?.status}
-          </span>
-        </div>
-        <div>
-          <strong className="text-gray-600">Template:</strong>
-          <p className="font-medium">
-            {viewCampaign?.template?.template_name || viewCampaign?.template_name || 'No template'}
-            {viewCampaign?.template_id && !viewCampaign?.template && (
-              <span className="text-xs text-blue-600 ml-2">(ID: {viewCampaign.template_id.substring(0, 8)}...)</span>
+      <Modal
+        isOpen={isViewModalOpen}
+        onClose={handleCloseViewModal}
+        title="Campaign Details"
+        size="xl"
+      >
+        <div className="space-y-4">
+          <div className="bg-gray-50 rounded-lg p-4">
+            <h4 className="font-semibold text-gray-800 mb-3">Campaign Information</h4>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <strong className="text-gray-600">Name:</strong>
+                <p className="font-medium">{viewCampaign?.campaign_name}</p>
+              </div>
+              <div>
+                <strong className="text-gray-600">Status:</strong>
+                <span className={`ml-2 px-2 py-1 rounded-full text-xs ${getStatusColor(viewCampaign?.status || '')}`}>
+                  {viewCampaign?.status}
+                </span>
+              </div>
+              <div>
+                <strong className="text-gray-600">Template:</strong>
+                <p className="font-medium">
+                  {viewCampaign?.template?.template_name || viewCampaign?.template_name || 'No template'}
+                  {viewCampaign?.template_id && !viewCampaign?.template && (
+                    <span className="text-xs text-blue-600 ml-2">(ID: {viewCampaign.template_id.substring(0, 8)}...)</span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <strong className="text-gray-600">Scheduled:</strong>
+                <p>{viewCampaign?.scheduled_date ? new Date(viewCampaign.scheduled_date).toLocaleString() : 'Not scheduled'}</p>
+              </div>
+              <div>
+                <strong className="text-gray-600">Created:</strong>
+                <p>{viewCampaign?.created_at ? new Date(viewCampaign.created_at).toLocaleString() : 'N/A'}</p>
+              </div>
+              <div>
+                <strong className="text-gray-600">Messages:</strong>
+                <p>{viewCampaign?.sent_count || 0} sent, {viewCampaign?.failed_count || 0} failed</p>
+              </div>
+            </div>
+            
+            {(viewCampaign?.template?.template_desc || viewCampaign?.template_content) && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="flex justify-between items-center mb-2">
+                  <strong className="text-gray-600">Template Content:</strong>
+                  {viewCampaign?.template?.id && (
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                      Template ID: {viewCampaign.template.id.substring(0, 8)}...
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-sm text-gray-700 bg-white p-3 rounded border">
+                  <pre className="whitespace-pre-wrap font-sans">
+                    {viewCampaign?.template?.template_desc || viewCampaign?.template_content}
+                  </pre>
+                </div>
+                <div className="mt-2 text-xs text-gray-500 flex items-center">
+                  <AlertCircle size={12} className="mr-1" />
+                  Variables like <span className="font-mono">{"{{customer_name}}"}</span> will be replaced with data from the Excel file
+                </div>
+              </div>
             )}
-          </p>
-        </div>
-        <div>
-          <strong className="text-gray-600">Scheduled:</strong>
-          <p>{viewCampaign?.scheduled_date ? new Date(viewCampaign.scheduled_date).toLocaleString() : 'Not scheduled'}</p>
-        </div>
-        <div>
-          <strong className="text-gray-600">Created:</strong>
-          <p>{viewCampaign?.created_at ? new Date(viewCampaign.created_at).toLocaleString() : 'N/A'}</p>
-        </div>
-        <div>
-          <strong className="text-gray-600">Messages:</strong>
-          <p>{viewCampaign?.sent_count || 0} sent, {viewCampaign?.failed_count || 0} failed</p>
-        </div>
-      </div>
-      
-      {/* Show template content from various sources */}
-      {(viewCampaign?.template?.template_desc || viewCampaign?.template_content) && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="flex justify-between items-center mb-2">
-            <strong className="text-gray-600">Template Content:</strong>
-            {viewCampaign?.template?.id && (
-              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                Template ID: {viewCampaign.template.id.substring(0, 8)}...
-              </span>
+
+            {viewCampaign?.customer_file && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <strong className="text-gray-600">Customer File:</strong>
+                <div className="mt-2 flex items-center justify-between">
+                  <a 
+                    href={viewCampaign.customer_file} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 text-sm flex items-center"
+                  >
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Download Excel File
+                  </a>
+                  {viewCampaign.sent_count > 0 && (
+                    <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                      {viewCampaign.sent_count} customers processed
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {viewCampaign?.processing_errors && (
+              <div className="mt-4 pt-4 border-t border-red-200 bg-red-50 rounded p-3">
+                <div className="flex items-center mb-2">
+                  <AlertCircle className="h-5 w-5 text-red-600 mr-2" />
+                  <strong className="text-red-800">Processing Errors:</strong>
+                </div>
+                <pre className="text-sm text-red-700 whitespace-pre-wrap">
+                  {JSON.stringify(viewCampaign.processing_errors, null, 2)}
+                </pre>
+              </div>
             )}
           </div>
-          <div className="mt-1 text-sm text-gray-700 bg-white p-3 rounded border">
-            <pre className="whitespace-pre-wrap font-sans">
-              {viewCampaign?.template?.template_desc || viewCampaign?.template_content}
-            </pre>
-          </div>
-        <div className="mt-2 text-xs text-gray-500 flex items-center">
-  <AlertCircle size={12} className="mr-1" />
-  Variables like <span className="font-mono">{"{{customer_name}}"}</span> will be replaced with data from the Excel file
-</div>
-        </div>
-      )}
 
-      {/* Show file information */}
-      {viewCampaign?.customer_file && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <strong className="text-gray-600">Customer File:</strong>
-          <div className="mt-2 flex items-center justify-between">
-            <a 
-              href={viewCampaign.customer_file} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 text-sm flex items-center"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Download Excel File
-            </a>
-            {viewCampaign.sent_count > 0 && (
-              <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                {viewCampaign.sent_count} customers processed
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Show processing errors if any */}
-      {viewCampaign?.processing_errors && (
-        <div className="mt-4 pt-4 border-t border-red-200 bg-red-50 rounded p-3">
-          <div className="flex items-center mb-2">
-            <AlertCircle className="h-5 w-5 text-red-600 mr-2" />
-            <strong className="text-red-800">Processing Errors:</strong>
-          </div>
-          <pre className="text-sm text-red-700 whitespace-pre-wrap">
-            {JSON.stringify(viewCampaign.processing_errors, null, 2)}
-          </pre>
-        </div>
-      )}
-    </div>
-
-    {/* Campaign Payload Section */}
-    {campaignPayload ? (
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="font-semibold text-gray-800">Advanta Payload</h4>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-              {campaignPayload.count || 0} messages
-            </span>
-            <button
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(JSON.stringify(campaignPayload, null, 2));
-                  alert('Payload copied to clipboard!');
-                } catch (error) {
-                  console.error('Failed to copy:', error);
-                }
-              }}
-              className="text-xs bg-gray-800 text-white px-2 py-1 rounded hover:bg-gray-700"
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-        <div className="relative">
-          <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm max-h-96">
-            {JSON.stringify(campaignPayload, null, 2)}
-          </pre>
-        </div>
-        <div className="mt-3 text-xs text-gray-500 flex items-center">
-          <Info size={12} className="mr-1" />
-          This is the payload that will be sent to Advanta SMS gateway.
-        </div>
-      </div>
-    ) : (
-      <div className="text-center py-8 text-gray-500">
-        <div className="inline-block p-4 bg-gray-100 rounded-full mb-4">
-          <Eye className="h-8 w-8 text-gray-400" />
-        </div>
-        <p className="text-gray-700">No payload data available.</p>
-        <p className="text-sm mt-2">Process the campaign first to generate payload.</p>
-        <div className="mt-4 flex justify-center space-x-2">
-          {viewCampaign?.status === 'DRAFT' && (
-            <Button
-              onClick={() => {
-                handleCloseViewModal();
-                handleOpenProcess(viewCampaign!);
-              }}
-            >
-              <Play size={16} className="mr-2" />
-              Process Campaign
-            </Button>
+          {campaignPayload ? (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-gray-800">Advanta Payload</h4>
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                    {campaignPayload.count || 0} messages
+                  </span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(JSON.stringify(campaignPayload, null, 2));
+                        alert('Payload copied to clipboard!');
+                      } catch (error) {
+                        console.error('Failed to copy:', error);
+                      }
+                    }}
+                    className="text-xs bg-gray-800 text-white px-2 py-1 rounded hover:bg-gray-700"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+              <div className="relative">
+                <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm max-h-96">
+                  {JSON.stringify(campaignPayload, null, 2)}
+                </pre>
+              </div>
+              <div className="mt-3 text-xs text-gray-500 flex items-center">
+                <Info size={12} className="mr-1" />
+                This is the payload that will be sent to Advanta SMS gateway.
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <div className="inline-block p-4 bg-gray-100 rounded-full mb-4">
+                <Eye className="h-8 w-8 text-gray-400" />
+              </div>
+              <p className="text-gray-700">No payload data available.</p>
+              <p className="text-sm mt-2">Process the campaign first to generate payload.</p>
+              <div className="mt-4 flex justify-center space-x-2">
+                {viewCampaign?.status === 'DRAFT' && (
+                  <Button
+                    onClick={() => {
+                      handleCloseViewModal();
+                      handleOpenProcess(viewCampaign!);
+                    }}
+                  >
+                    <Play size={16} className="mr-2" />
+                    Process Campaign
+                  </Button>
+                )}
+                {viewCampaign?.status === 'PROCESSED' && (
+                  <Button
+                    onClick={() => {
+                      handleCloseViewModal();
+                      handleSendCampaign(viewCampaign!);
+                    }}
+                    className="bg-purple-600 hover:bg-purple-700"
+                  >
+                    <Send size={16} className="mr-2" />
+                    Send Campaign
+                  </Button>
+                )}
+              </div>
+            </div>
           )}
-          {viewCampaign?.status === 'PROCESSED' && (
-            <Button
-              onClick={() => {
-                handleCloseViewModal();
-                handleSendCampaign(viewCampaign!);
-              }}
-              className="bg-purple-600 hover:bg-purple-700"
-            >
-              <Send size={16} className="mr-2" />
-              Send Campaign
-            </Button>
-          )}
-        </div>
-      </div>
-    )}
 
-    {/* Action Buttons */}
-    <div className="flex justify-between items-center pt-4 border-t border-gray-200">
-      <div className="text-xs text-gray-500">
-        Last updated: {viewCampaign?.updated_at ? new Date(viewCampaign.updated_at).toLocaleString() : 'N/A'}
-      </div>
-      <div className="flex space-x-2">
-        {viewCampaign?.status === 'DRAFT' && (
-          <Button
-            variant="outline"
-            onClick={() => {
-              handleCloseViewModal();
-              handleOpenEdit(viewCampaign!);
-            }}
-          >
-            <Edit size={16} className="mr-2" />
-            Edit Campaign
-          </Button>
-        )}
-        <Button
-          variant="outline"
-          onClick={handleCloseViewModal}
-        >
-          Close
-        </Button>
-      </div>
-    </div>
-  </div>
-</Modal>
+          {/* Action Buttons */}
+          <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+            <div className="text-xs text-gray-500">
+              Last updated: {viewCampaign?.updated_at ? new Date(viewCampaign.updated_at).toLocaleString() : 'N/A'}
+            </div>
+            <div className="flex space-x-2">
+              {viewCampaign?.status === 'DRAFT' && canChange && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    handleCloseViewModal();
+                    handleOpenEdit(viewCampaign!);
+                  }}
+                >
+                  <Edit size={16} className="mr-2" />
+                  Edit Campaign
+                </Button>
+              )}
+              <Button variant="outline" onClick={handleCloseViewModal}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -8,7 +8,6 @@ import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Image from "next/image";
 
-
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -24,19 +23,26 @@ export default function LoginPage() {
     setError('');
 
     try {
+      // Step 1: Get authentication tokens
       const tokens = await apiClient.login(username, password);
       
-      // In a real app, you'd decode the token to get user info
-      const user = {
-        id: '1',
-        username,
-        email: `${username}@company.com`,
-      };
+      // Step 2: Fetch user details and permissions
+      const userDetails = await apiClient.getUserDetails();
       
-      login(tokens, user);
-      router.push('/');
+      // Step 3: Store everything via auth context
+      login(tokens, userDetails);
+
+      // check if user role is officer and direct to '/analytics/officer/{{user_id}}' instead of dashboard
+      if (userDetails.user.role === 'collection_officer') {
+        router.push(`/analytics/officer/${userDetails?.user?.id}`);
+        return;
+      }
+      
+      // Step 4: Redirect to dashboard
+      router.push('/analytics/admin');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Login failed');
+      console.error('Login error:', err);
+      setError(err.response?.data?.detail || err.message || 'Login failed');
     } finally {
       setIsLoading(false);
     }
@@ -56,7 +62,6 @@ export default function LoginPage() {
             />
           </div>
           <div className="text-center">
-            {/* <h2 className="text-3xl font-bold text-gray-900">Choice Collections</h2> */}
             <p className="mt-2 text-sm text-gray-600">
               Sign in to your account
             </p>
@@ -65,7 +70,7 @@ export default function LoginPage() {
         <CardContent>
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
-              <div className="bg-error-50 border border-error-200 text-error-700 px-4 py-3 rounded">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
                 {error}
               </div>
             )}
@@ -82,6 +87,7 @@ export default function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent-500 focus:border-accent-500"
+                disabled={isLoading}
               />
             </div>
 
@@ -97,6 +103,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent-500 focus:border-accent-500"
+                disabled={isLoading}
               />
             </div>
 
@@ -108,7 +115,7 @@ export default function LoginPage() {
               loading={isLoading}
               className="w-full"
             >
-              Sign in
+              {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
           </form>
         </CardContent>

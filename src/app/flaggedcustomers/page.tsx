@@ -10,6 +10,7 @@ import { apiClient } from '@/lib/api';
 import { FlaggedCustomer } from '@/types/index';
 import { Plus, Edit, Trash2, Search, Filter, UserX, UserCheck, CheckCircle, XCircle } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
+import { usePermissions } from '@/context/permission-context'; // <-- ADDED
 
 interface FlaggedCustomerFormData {
   phone_number: string;
@@ -19,6 +20,8 @@ interface FlaggedCustomerFormData {
 }
 
 export default function FlaggedCustomersPage() {
+  const { hasAccess } = usePermissions(); // <-- ADDED
+
   const [flaggedCustomers, setFlaggedCustomers] = useState<FlaggedCustomer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -44,12 +47,17 @@ export default function FlaggedCustomersPage() {
     is_active: true,
   });
 
+  // Permission shortcuts
+  const canCreate = hasAccess('add_flaggedcustomers');
+  const canChange = hasAccess('change_flaggedcustomers');
+  const canDelete = hasAccess('delete_flaggedcustomers');
+  // Adjust this permission codename if your backend uses a different one (e.g., 'can_approve_flag')
+  const canApprove = hasAccess('approve_flaggedcustomer');
+
   useEffect(() => {
     fetchData();
     fetchStats();
   }, []);
-
-  
 
   const fetchData = async () => {
     try {
@@ -85,11 +93,13 @@ export default function FlaggedCustomersPage() {
   };
 
   const handleOpenCreate = () => {
+    if (!canCreate) return; // Guard
     resetForm();
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (customer: FlaggedCustomer) => {
+    if (!canChange) return; // Guard
     setFormData({
       phone_number: customer.phone_number,
       customer_name: customer.customer_name,
@@ -101,11 +111,13 @@ export default function FlaggedCustomersPage() {
   };
 
   const handleOpenDelete = (customer: FlaggedCustomer) => {
+    if (!canDelete) return; // Guard
     setDeleteCustomer(customer);
     setIsDeleteModalOpen(true);
   };
 
   const handleOpenDeactivate = (customer: FlaggedCustomer) => {
+    if (!canChange) return; // Guard (toggle active status is a change)
     setDeactivateCustomer(customer);
     setIsDeactivateModalOpen(true);
   };
@@ -219,6 +231,7 @@ export default function FlaggedCustomersPage() {
   };
 
   const handleApprove = async (customer: FlaggedCustomer) => {
+    if (!canApprove) return; // Guard
     try {
       const client = apiClient.getClient();
       await client.post(`/flagged-customers/${customer.id}/approve_flag/`);
@@ -229,20 +242,18 @@ export default function FlaggedCustomersPage() {
     }
   };
 
-// In your FlaggedCustomersPage component, update the handleInputChange function:
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value
+    }));
 
-const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-  const { name, value, type } = e.target;
-  
-  setFormData(prev => ({
-    ...prev,
-    [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value
-  }));
-
-  if (formErrors[name]) {
-    setFormErrors(prev => ({ ...prev, [name]: '' }));
-  }
-};
+    if (formErrors[name]) {
+      setFormErrors(prev => ({ ...prev, [name]: '' }));
+    }
+  };
 
   const columns = [
     {
@@ -339,14 +350,18 @@ const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaE
       accessor: (row: FlaggedCustomer) => row,
       Cell: (value: FlaggedCustomer) => (
         <div className="flex space-x-2">
-          <button
-            onClick={() => handleOpenEdit(value)}
-            className="text-blue-600 hover:text-blue-700 transition-colors p-1 rounded hover:bg-blue-50"
-            title="Edit flagged customer"
-          >
-            <Edit size={16} />
-          </button>
-          {value.is_active && !value.approved_by && (
+          {/* Edit button – requires change permission */}
+          {canChange && (
+            <button
+              onClick={() => handleOpenEdit(value)}
+              className="text-blue-600 hover:text-blue-700 transition-colors p-1 rounded hover:bg-blue-50"
+              title="Edit flagged customer"
+            >
+              <Edit size={16} />
+            </button>
+          )}
+          {/* Approve button – requires approve permission (custom) and conditions */}
+          {canApprove && value.is_active && !value.approved_by && (
             <button
               onClick={() => handleApprove(value)}
               className="text-green-600 hover:text-green-700 transition-colors p-1 rounded hover:bg-green-50"
@@ -355,24 +370,30 @@ const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaE
               <CheckCircle size={16} />
             </button>
           )}
-          <button
-            onClick={() => handleOpenDeactivate(value)}
-            className={`transition-colors p-1 rounded ${
-              value.is_active 
-                ? 'text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50' 
-                : 'text-green-600 hover:text-green-700 hover:bg-green-50'
-            }`}
-            title={value.is_active ? 'Deactivate flag' : 'Activate flag'}
-          >
-            {value.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
-          </button>
-          <button
-            onClick={() => handleOpenDelete(value)}
-            className="text-red-600 hover:text-red-700 transition-colors p-1 rounded hover:bg-red-50"
-            title="Delete flagged customer"
-          >
-            <Trash2 size={16} />
-          </button>
+          {/* Activate/Deactivate button – requires change permission */}
+          {canChange && (
+            <button
+              onClick={() => handleOpenDeactivate(value)}
+              className={`transition-colors p-1 rounded ${
+                value.is_active 
+                  ? 'text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50' 
+                  : 'text-green-600 hover:text-green-700 hover:bg-green-50'
+              }`}
+              title={value.is_active ? 'Deactivate flag' : 'Activate flag'}
+            >
+              {value.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
+            </button>
+          )}
+          {/* Delete button – requires delete permission */}
+          {canDelete && (
+            <button
+              onClick={() => handleOpenDelete(value)}
+              className="text-red-600 hover:text-red-700 transition-colors p-1 rounded hover:bg-red-50"
+              title="Delete flagged customer"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       ),
       width: 140,
@@ -398,13 +419,16 @@ const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaE
           <h1 className="text-3xl font-bold text-gray-900">Flagged Customers</h1>
           <p className="text-gray-600 mt-2">Manage customers who require special attention or restrictions</p>
         </div>
-        <Button onClick={handleOpenCreate} className="bg-red-600 hover:bg-red-700">
-          <UserX size={20} className="mr-2" />
-          Flag Customer
-        </Button>
+        {/* Flag Customer button – requires create permission */}
+        {canCreate && (
+          <Button onClick={handleOpenCreate} className="bg-red-600 hover:bg-red-700">
+            <UserX size={20} className="mr-2" />
+            Flag Customer
+          </Button>
+        )}
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards – informational, no permission needed */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
