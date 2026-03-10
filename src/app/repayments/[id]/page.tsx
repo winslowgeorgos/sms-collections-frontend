@@ -159,12 +159,12 @@ export default function PaymentDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <button
+          {/* <button
             onClick={() => router.back()}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
           >
             <ArrowLeft size={20} />
-          </button>
+          </button> */}
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Payment Details</h1>
             <p className="text-gray-600 mt-1">Transaction ID: {payment.repayment_id}</p>

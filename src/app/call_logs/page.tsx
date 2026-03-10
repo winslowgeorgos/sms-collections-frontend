@@ -1,4 +1,3 @@
-// app/call-logs/page.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -7,6 +6,7 @@ import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { apiClient } from '@/lib/api';
+import CallLogDetailsModal from '@/components/call_logs/CallLogDetailsModal';
 import { 
   Phone, PhoneCall, Clock, Calendar, Users, TrendingUp, 
   CheckCircle, AlertCircle, Filter, Search, RefreshCw,
@@ -64,6 +64,8 @@ export default function CallLogsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month'>('week');
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  const [isCallDetailsModalOpen, setIsCallDetailsModalOpen] = useState(false);
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -98,7 +100,13 @@ export default function CallLogsPage() {
   };
 
   const handleViewCall = (callId: string) => {
-    window.open(`/call_logs/${callId}`, '_blank');
+    setSelectedCallId(callId);
+    setIsCallDetailsModalOpen(true);
+  };
+
+  const handleCloseCallDetailsModal = () => {
+    setIsCallDetailsModalOpen(false);
+    setSelectedCallId(null);
   };
 
   const handleExportData = () => {
@@ -418,6 +426,15 @@ export default function CallLogsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Call Log Details Modal */}
+      {selectedCallId && (
+        <CallLogDetailsModal
+          isOpen={isCallDetailsModalOpen}
+          onClose={handleCloseCallDetailsModal}
+          callId={selectedCallId}
+        />
+      )}
 
       {/* Create Call Log Modal */}
       {/* <CreateCallLogModal

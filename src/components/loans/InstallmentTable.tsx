@@ -16,6 +16,7 @@ interface Installment {
   days_until_due: number;
   is_current_month: boolean;
   paid_off: boolean;
+  cumulative_balance : number;
 }
 
 interface InstallmentTableProps {
@@ -87,6 +88,17 @@ export default function InstallmentTable({ installments, onViewDetails }: Instal
       id: 'balance',
       label: 'Balance',
       accessor: (row: Installment) => row.balance,
+      Cell: (value: number) => (
+        <span className={value > 0 ? 'text-red-600 font-medium' : 'text-gray-600'}>
+          KSh {value.toLocaleString()}
+        </span>
+      ),
+      width: 120,
+    },
+      {
+      id: 'cummulative_balance',
+      label: 'Cummulative Balance',
+      accessor: (row: Installment) => row.cumulative_balance,
       Cell: (value: number) => (
         <span className={value > 0 ? 'text-red-600 font-medium' : 'text-gray-600'}>
           KSh {value.toLocaleString()}

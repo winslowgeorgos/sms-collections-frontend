@@ -71,7 +71,7 @@ export default function MyCallLogsPage() {
   };
 
   const handleViewCall = (callId: string) => {
-    window.open(`/call_logs/${callId}`, '_blank');
+    router.push(`/call_logs/${callId}`);
   };
 
   const formatDuration = (seconds: number) => {

@@ -1,7 +1,7 @@
 // components/call-logs/AddPaymentReminderModal.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { FormInput } from '@/components/forms/FormInput';
@@ -20,6 +20,8 @@ interface AddPaymentReminderModalProps {
     balance: number;
     due_date: string;
   } | null;
+  defaultPromisedAmount?: number;
+  defaultPromisedDate?: string; // Can be ISO string or YYYY-MM-DD
 }
 
 const PAYMENT_METHODS = [
@@ -35,16 +37,72 @@ export default function AddPaymentReminderModal({
   onClose,
   onSubmit,
   loanDetails,
-  installmentDetails
+  installmentDetails,
+  defaultPromisedAmount,
+  defaultPromisedDate
 }: AddPaymentReminderModalProps) {
+  // Helper function to format date for input (YYYY-MM-DD)
+  const formatDateForInput = (dateString?: string): string => {
+    if (!dateString) {
+      // Default to 7 days from now
+      return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    }
+    
+    try {
+      // Check if it's already in YYYY-MM-DD format
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+        return dateString;
+      }
+      
+      // Otherwise parse as ISO and extract date part
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        // Invalid date, return default
+        return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      }
+      return date.toISOString().split('T')[0];
+    } catch {
+      // If any error, return default
+      return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    }
+  };
+
   const [formData, setFormData] = useState({
-    promised_amount: installmentDetails?.balance || loanDetails.total_outstanding || '',
-    promised_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    promised_amount: defaultPromisedAmount || installmentDetails?.balance || loanDetails.total_outstanding || '',
+    promised_date: formatDateForInput(defaultPromisedDate),
     payment_method: 'mpesa',
     follow_up_call_required: true,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Update form when defaultPromisedAmount changes
+  useEffect(() => {
+    if (defaultPromisedAmount) {
+      setFormData(prev => ({
+        ...prev,
+        promised_amount: defaultPromisedAmount
+      }));
+    }
+  }, [defaultPromisedAmount]);
+
+  // Update form when defaultPromisedDate changes
+  useEffect(() => {
+    if (defaultPromisedDate) {
+      setFormData(prev => ({
+        ...prev,
+        promised_date: formatDateForInput(defaultPromisedDate)
+      }));
+    }
+  }, [defaultPromisedDate]);
+
+  // Debug log
+  useEffect(() => {
+    if (defaultPromisedDate) {
+      console.log("Original promised date:", defaultPromisedDate);
+      console.log("Formatted for input:", formatDateForInput(defaultPromisedDate));
+    }
+  }, [defaultPromisedDate]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -70,10 +128,10 @@ export default function AddPaymentReminderModal({
     
     setIsSubmitting(true);
     try {
-
+      // Send the date in the format expected by the API
       await onSubmit({
         promised_amount: Number(formData.promised_amount),
-        promised_date: new Date(formData.promised_date).toISOString(),
+        promised_date: formData.promised_date, // This is now YYYY-MM-DD
         payment_method: formData.payment_method,
         follow_up_call_required: formData.follow_up_call_required,
       });
@@ -89,8 +147,8 @@ export default function AddPaymentReminderModal({
 
   const resetForm = () => {
     setFormData({
-      promised_amount: installmentDetails?.balance || loanDetails.total_outstanding || '',
-      promised_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      promised_amount: defaultPromisedAmount || installmentDetails?.balance || loanDetails.total_outstanding || '',
+      promised_date: formatDateForInput(defaultPromisedDate),
       payment_method: 'mpesa',
       follow_up_call_required: true,
     });
@@ -142,8 +200,6 @@ export default function AddPaymentReminderModal({
           error={errors.promised_amount}
           required
           placeholder="Enter promised amount"
-        //   min="0"
-        //   step="0.01"
         />
 
         <div>
@@ -195,7 +251,7 @@ export default function AddPaymentReminderModal({
 
         <div className="bg-yellow-50 p-4 rounded-lg">
           <p className="text-sm text-yellow-800">
-            <strong>Note:</strong> This will create a payment reminder and schedule a follow-up if requested.
+            <strong>Note:</strong> This will create a payment reminder linked to the call log.
             The customer will be notified according to your campaign settings.
           </p>
         </div>

@@ -14,6 +14,8 @@ import {
 import GenericTable from '@/components/ui/cTable';
 import Link from 'next/link';
 
+
+
 interface CallLog {
   id: string;
   call_time: string;
@@ -104,7 +106,7 @@ export default function AllCallLogsPage() {
   };
 
   const handleViewCall = (callId: string) => {
-    window.open(`/call_logs/${callId}`, '_blank');
+    router.push(`/call_logs/${callId}`);
   };
 
   const handlePageChange = (newPage: number) => {

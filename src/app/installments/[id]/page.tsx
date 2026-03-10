@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -65,6 +65,7 @@ interface InstallmentDetail {
 
 export default function InstallmentDetailsPage() {
   const params = useParams();
+  const router = useRouter()
   const installmentId = params.id as string;
   
   const [installment, setInstallment] = useState<InstallmentDetail | null>(null);
@@ -119,12 +120,12 @@ export default function InstallmentDetailsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <Link href={`/loans/${installment.main_loan}`}>
+          {/* <Link href={`/loans/${installment.main_loan}`}>
             <Button variant="outline" size="sm">
               <ArrowLeft size={16} className="mr-2" />
               Back to Loan
             </Button>
-          </Link>
+          </Link> */}
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Installment #{installment.installment_id}</h1>
             <p className="text-gray-600">Loan ID: {installment.loan_id}</p>
@@ -316,7 +317,7 @@ export default function InstallmentDetailsPage() {
 
       {/* Actions */}
       <div className="flex justify-end space-x-3">
-        <Button variant="outline" onClick={() => window.open(`/call-logs/new?loan=${installment.loan_id}&installment=${installment.installment_id}`, '_blank')}>
+        <Button variant="outline" onClick={() => router.push(`/call-logs/new?loan=${installment.loan_id}&installment=${installment.installment_id}`)}>
           Log Call for This Installment
         </Button>
         <Button className="bg-blue-600 hover:bg-blue-700">

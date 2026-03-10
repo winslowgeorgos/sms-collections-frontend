@@ -11,7 +11,7 @@ import {
   CreditCard, Filter, Search, RefreshCw, Eye,
   Calendar, Clock, DollarSign, Download, X,
   TrendingUp, TrendingDown, AlertCircle, CheckCircle,
-  Wallet, Banknote, Receipt, Copy, ExternalLink
+  Wallet, Banknote, Receipt, Copy, ExternalLink,
 } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
 import Link from 'next/link';
@@ -226,11 +226,11 @@ export default function AllPaymentsPage() {
   };
 
   const handleViewPayment = (paymentId: string) => {
-    window.open(`/repayments/${paymentId}`, '_blank');
+    router.push(`/repayments/${paymentId}`);
   };
 
   const handleViewLoan = (loanId: string) => {
-    window.open(`/loans/${loanId}`, '_blank');
+    router.push(`/loans/${loanId}`);
   };
 
   const handleCopyId = (text: string) => {

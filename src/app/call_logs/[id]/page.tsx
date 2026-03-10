@@ -1,4 +1,3 @@
-// app/call-logs/[id]/page.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -9,13 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { FormInput } from '@/components/forms/FormInput';
 import { apiClient } from '@/lib/api';
+import { InstallmentDetailsModal } from '@/components/call_logs/InstallmentDetailsModal';
 import { 
   ArrowLeft, Phone, Clock, Calendar, User, Edit,
   Trash2, CheckCircle, AlertCircle, MessageSquare,
-  DollarSign, Save, X, PhoneCall, UserCheck
+  DollarSign, Save, X, PhoneCall, UserCheck, Eye
 } from 'lucide-react';
 import AddPaymentReminderModal from '@/components/call_logs/AddPaymentReminderModal';
-import { usePermissions } from '@/context/permission-context'; // <-- ADDED
+import { usePermissions } from '@/context/permission-context';
 
 interface CallLogDetail {
   id: string;
@@ -105,18 +105,19 @@ export default function CallLogDetailsPage() {
   const params = useParams();
   const router = useRouter();
   const callId = params.id as string;
-  const { hasAccess } = usePermissions(); // <-- ADDED
+  const { hasAccess } = usePermissions();
 
   // Permission shortcuts – adjust codenames as needed
   const canChange = hasAccess('change_calllog');
   const canDelete = hasAccess('delete_calllog');
-  const canAddReminder = hasAccess('add_paymentreminder'); // or maybe a specific permission
+  const canAddReminder = hasAccess('add_paymentreminder');
 
   const [callLog, setCallLog] = useState<CallLogDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     notes: '',
@@ -240,12 +241,12 @@ export default function CallLogDetailsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <Link href="/call_logs">
+          {/* <Link href="/call_logs">
             <Button variant="outline" size="sm">
               <ArrowLeft size={16} className="mr-2" />
               Back
             </Button>
-          </Link>
+          </Link> */}
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Call Log Details</h1>
             <p className="text-gray-600">Call recorded on {new Date(callLog.call_time).toLocaleString()}</p>
@@ -305,7 +306,7 @@ export default function CallLogDetailsPage() {
                   <Link 
                     href={`/loans/${callLog?.loan_details?.loan_id}`}
                     className="text-lg font-semibold text-blue-600 hover:underline"
-                    target="_blank"
+                    
                   >
                     {callLog.loan_details.customer_name}
                   </Link>
@@ -531,13 +532,15 @@ export default function CallLogDetailsPage() {
                           <Calendar size={16} className="text-blue-600 mr-2" />
                           <span className="font-medium">Installment #{callLog.installment_details.installment_id}</span>
                         </div>
-                        <Link 
-                          href={`/installments/${callLog.installment_details.id}`}
-                          target="_blank"
-                          className="text-sm text-blue-600 hover:underline"
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setIsInstallmentModalOpen(true)}
+                          className="text-blue-600 hover:text-blue-800"
                         >
+                          <Eye size={16} className="mr-1" />
                           View Details
-                        </Link>
+                        </Button>
                       </div>
                       <div className="grid grid-cols-3 gap-4 mt-2 text-sm">
                         <div>
@@ -645,7 +648,7 @@ export default function CallLogDetailsPage() {
                 </Button>
               )}
               
-              <Link href={`/loans/${callLog?.loan_details?.loan_id}`} target="_blank">
+              <Link href={`/loans/${callLog?.loan_details?.loan_id}`}>
                 <Button variant="outline" className="w-full">
                   <PhoneCall size={16} className="mr-2" />
                   View Loan Details
@@ -653,12 +656,14 @@ export default function CallLogDetailsPage() {
               </Link>
 
               {callLog.installment_details && (
-                <Link href={`/installments/${callLog.installment_details.id}`} target="_blank">
-                  <Button variant="outline" className="w-full">
-                    <Calendar size={16} className="mr-2" />
-                    View Installment
-                  </Button>
-                </Link>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setIsInstallmentModalOpen(true)}
+                >
+                  <Eye size={16} className="mr-2" />
+                  View Installment Details
+                </Button>
               )}
             </CardContent>
           </Card>
@@ -688,13 +693,27 @@ export default function CallLogDetailsPage() {
         </div>
       </div>
 
+      {/* Installment Details Modal */}
+      {callLog?.installment_details && (
+        <InstallmentDetailsModal
+          isOpen={isInstallmentModalOpen}
+          onClose={() => setIsInstallmentModalOpen(false)}
+          installment={callLog.installment_details}
+          loanDetails={{
+            id: callLog.main_loan,
+            loan_id: callLog.loan_details.loan_id,
+            customer_name: callLog.loan_details.customer_name,
+            total_outstanding: callLog.loan_details.total_outstanding
+          }}
+        />
+      )}
+
       {/* Delete Confirmation Modal */}
       <Modal
         isOpen={isDeleteModalOpen}
         onClose={() => setIsDeleteModalOpen(false)}
         title="Delete Call Log"
         size="sm"
-        isLoading={isSubmitting}
       >
         <div className="text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 mb-4">

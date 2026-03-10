@@ -355,12 +355,12 @@ export default function OfficerAnalyticsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <Link href="/analytics/admin">
+          {/* <Link href="/analytics/admin">
             <Button variant="outline" size="sm">
               <ArrowLeft size={16} className="mr-2" />
               Back to Dashboard
             </Button>
-          </Link>
+          </Link> */}
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Officer Performance Analytics</h1>
             <p className="text-gray-600">Officer ID: {officerId}</p>

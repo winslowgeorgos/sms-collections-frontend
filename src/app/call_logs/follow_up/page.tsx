@@ -11,6 +11,8 @@ import {
   User, Eye, RefreshCw, Filter, AlertTriangle
 } from 'lucide-react';
 
+
+
 interface FollowUpTask {
   id: string;
   type: 'call_follow_up' | 'payment_reminder';
@@ -51,11 +53,12 @@ export default function FollowUpTasksPage() {
     }
   };
 
+
   const handleViewTask = (task: FollowUpTask) => {
     if (task.type === 'call_follow_up') {
-      window.open(`/call_logs/${task.related_id}`, '_blank');
+      router.push(`/call_logs/${task.related_id}`);
     } else {
-      window.open(`/payment-reminders/${task.related_id}`, '_blank');
+      router.push(`/payment-reminders/${task.related_id}`);
     }
   };
 

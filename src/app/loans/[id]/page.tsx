@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api';
@@ -67,6 +67,7 @@ interface Installment {
   days_until_due: number;
   is_current_month: boolean;
   paid_off: boolean;
+  cumulative_balance : number;
 }
 
 interface SMSLog {
@@ -121,6 +122,7 @@ export default function LoanDetailsPage() {
   const params = useParams();
   const loanId = params.id as string;
   const { hasAccess } = usePermissions(); // <-- ADDED
+  const router = useRouter()
 
   const [loanDetails, setLoanDetails] = useState<LoanDetails | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -179,14 +181,14 @@ const handleSMSSent = () => {
     // Find the installment by installment_id to get its UUID
     const installment = loanDetails?.installments.find(inst => inst.installment_id === installmentId);
     if (installment?.id) {
-      window.open(`/installments/${installment.id}`, '_blank');
+      router.push(`/installments/${installment.id}`);
     }
   };
 
   const handleViewCallLog = (callId: string) => {
     // Open call log detail page – requires view permission (optional guard)
     if (hasAccess('view_calllog')) {
-      window.open(`/call_logs/${callId}`, '_blank');
+      router.push(`/call_logs/${callId}`);
     }
   };
 
@@ -264,12 +266,6 @@ const handleSMSSent = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <Link href="/loans/">
-            <Button variant="outline" size="sm">
-              <ArrowLeft size={16} className="mr-2" />
-              Back
-            </Button>
-          </Link>
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Loan Details</h1>
             <p className="text-gray-600">Loan ID: {main_loan.loan_id}</p>
@@ -370,7 +366,7 @@ const handleSMSSent = () => {
               </Button>
             )}
             {hasAccess('can_view_all_call_logs') && (
-              <Link href={`/call_logs?loan_id=${main_loan.loan_id}`} target="_blank">
+              <Link href={`/call_logs?loan_id=${main_loan.loan_id}`}>
                 <Button size="sm" variant="outline">
                   <MessageCircle size={14} className="mr-2" />
                   View All Calls

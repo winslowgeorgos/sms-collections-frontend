@@ -313,7 +313,7 @@ export default function MyPaymentsPage() {
   };
 
   const handleViewLoan = (loanId: string) => {
-    window.open(`/loans/${loanId}`, '_blank');
+    router.push(`/loans/${loanId}`);
   };
 
   const handleCopyId = (text: string) => {
