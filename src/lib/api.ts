@@ -1,7 +1,20 @@
 // lib/api.ts
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
-import { API_BASE_URL, AUTH_TOKEN_KEY, USER_KEY } from './constants';
+import { API_BASE_URL, OUT_API_BASE_URL, AUTH_TOKEN_KEY, USER_KEY } from './constants';
 import { AuthTokens, UserDetailsResponse } from '@/types';
+
+// Helper function to determine which base URL to use
+const getBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // Check if the browser route reads 10.24.1.1
+    console.log("hostname : ", hostname)
+    if (hostname === '10.24.1.1') {
+      return OUT_API_BASE_URL;
+    }
+  }
+  return API_BASE_URL;
+};
 
 class APIClient {
   private client: AxiosInstance;
@@ -10,7 +23,7 @@ class APIClient {
 
   constructor() {
     this.client = axios.create({
-      baseURL: API_BASE_URL,
+      baseURL: getBaseUrl(),
       headers: {
         'Content-Type': 'application/json',
       },
@@ -126,7 +139,7 @@ class APIClient {
     }
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/token/refresh/`, {
+      const response = await axios.post(`${getBaseUrl()}/token/refresh/`, {
         refresh: tokens.refresh,
       });
 

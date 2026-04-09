@@ -11,6 +11,7 @@ interface ModalProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   isLoading?: boolean;
   scrollBehavior?: 'inside' | 'outside'; // Choose scrolling behavior
+  closeOnBackdropClick?: boolean; // New prop to control backdrop click behavior
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -21,6 +22,7 @@ export const Modal: React.FC<ModalProps> = ({
   size = 'md',
   isLoading = false,
   scrollBehavior = 'inside', // Default to scrolling inside modal
+  closeOnBackdropClick = false, // Default to false - won't close on backdrop click
 }) => {
   if (!isOpen) return null;
 
@@ -32,7 +34,8 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && !isLoading) {
+    // Only close if explicitly enabled and not loading
+    if (closeOnBackdropClick && e.target === e.currentTarget && !isLoading) {
       onClose();
     }
   };

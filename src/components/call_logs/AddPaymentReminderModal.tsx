@@ -44,8 +44,8 @@ export default function AddPaymentReminderModal({
   // Helper function to format date for input (YYYY-MM-DD)
   const formatDateForInput = (dateString?: string): string => {
     if (!dateString) {
-      // Default to 7 days from now
-      return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      // Default to today's date instead of 7 days from now
+      return new Date().toISOString().split('T')[0];
     }
     
     try {
@@ -57,13 +57,13 @@ export default function AddPaymentReminderModal({
       // Otherwise parse as ISO and extract date part
       const date = new Date(dateString);
       if (isNaN(date.getTime())) {
-        // Invalid date, return default
-        return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        // Invalid date, return today
+        return new Date().toISOString().split('T')[0];
       }
       return date.toISOString().split('T')[0];
     } catch {
-      // If any error, return default
-      return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      // If any error, return today
+      return new Date().toISOString().split('T')[0];
     }
   };
 
@@ -210,7 +210,8 @@ export default function AddPaymentReminderModal({
             type="date"
             value={formData.promised_date}
             onChange={(e) => setFormData(prev => ({ ...prev, promised_date: e.target.value }))}
-            min={new Date().toISOString().split('T')[0]}
+            // REMOVED: min={new Date().toISOString().split('T')[0]}
+            // This allows selecting today's date and past dates
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             required
           />

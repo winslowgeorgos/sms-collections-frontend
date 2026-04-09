@@ -321,6 +321,7 @@ export interface Loan {
   active_installment_id: number;
   paybill_number: string;
   loan_provider_name: string;
+  current_month_installment_due_date:string;
   created_at: string;
   updated_at: string;
   last_sync_at: string;

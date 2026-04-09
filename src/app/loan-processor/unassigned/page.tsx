@@ -356,6 +356,31 @@ export default function UnassignedLoansPage() {
       sortable: true,
     },
     {
+      id: 'current_month_installment_due_date',
+      label: 'Active Installment Due Date',
+      accessor: (row: UnassignedLoan) => row.current_month_installment_due_date,
+      Cell: (value: string) => {
+        const dueDate = new Date(value);
+        const today = new Date();
+        const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        
+        let colorClass = 'text-gray-600';
+        if (daysUntilDue < 0) colorClass = 'text-gray-600 font-medium';
+        else if (daysUntilDue <= 7) colorClass = 'text-gray-600';
+        
+        return (
+          <div className={colorClass}>
+            {dueDate.toLocaleDateString()}
+            <span className="text-xs block">
+              {daysUntilDue < 0 ? `${Math.abs(daysUntilDue)} days overdue` : `${daysUntilDue} days left`}
+            </span>
+          </div>
+        );
+      },
+      width: 130,
+      sortable: true,
+    },
+    {
       id: 'status',
       label: 'Status',
       accessor: (row: UnassignedLoan) => row.status,
@@ -605,6 +630,7 @@ export default function UnassignedLoansPage() {
                 pageSize: data.page_size,
                 onPageChange: handlePageChange,
                 hasNextPage: data.page  < data.total_pages,
+                hasPreviousPage : true,
                 serverSide: true
               }}
               virtualized={true}
