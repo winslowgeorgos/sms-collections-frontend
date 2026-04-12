@@ -1,4 +1,3 @@
-// app/loans/[id]/page.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -10,10 +9,11 @@ import {
   ArrowLeft, Phone, Mail, Calendar, DollarSign, 
   Clock, AlertCircle, CheckCircle, User, Building,
   FileText, MessageSquare, PhoneCall, Download, Edit,
-  Trash2, Eye, MessageCircle, Bell, Plus
+  Trash2, Eye, MessageCircle, Bell, Plus, FileWarning,
+  Send, Printer, Loader2, X, AlertTriangle
 } from 'lucide-react';
 import Link from 'next/link';
-import { usePermissions } from '@/context/permission-context'; // <-- ADDED
+import { usePermissions } from '@/context/permission-context';
 import InstallmentTable from '@/components/loans/InstallmentTable';
 import CreateCallLogModal from '@/components/call_logs/CreateCallLogModal';
 import AddPaymentReminderModal from '@/components/call_logs/AddPaymentReminderModal';
@@ -67,7 +67,7 @@ interface Installment {
   days_until_due: number;
   is_current_month: boolean;
   paid_off: boolean;
-  cumulative_balance : number;
+  cumulative_balance: number;
 }
 
 interface SMSLog {
@@ -118,11 +118,56 @@ interface CallLogsResponse {
   calls: CallLog[];
 }
 
+interface DemandLetterData {
+  success: boolean;
+  message: string;
+  document_id: string;
+  verification_code: string;
+  loan_id: string;
+  reference: string;
+  amount_due: number;
+  customer_name: string;
+  generated_at: string;
+  pdf_url: string;
+  preview_html: string;
+  email_sent: boolean;
+  edit_url: string;
+  letter_data: {
+    loan_id: string;
+    reference: string;
+    customer: {
+      name: string;
+      id_number: string;
+      address_line1: string;
+      address_line2: string;
+      phone: string;
+      email: string;
+      store_name: string;
+      city_name: string;
+    };
+    loan_info: {
+      amount_due: number;
+      principal_amount: number;
+      loan_date: string;
+      loan_term_months: number;
+      monthly_installment: number;
+      payment_due_day: string;
+      first_payment_due_date: string;
+      has_current_month: any;
+      total_outstanding: number;
+      total_paid: number;
+      interest_rate: number;
+    };
+    assigned_officer: string;
+    generated_at: string;
+  };
+}
+
 export default function LoanDetailsPage() {
   const params = useParams();
   const loanId = params.id as string;
-  const { hasAccess } = usePermissions(); // <-- ADDED
-  const router = useRouter()
+  const { hasAccess } = usePermissions();
+  const router = useRouter();
 
   const [loanDetails, setLoanDetails] = useState<LoanDetails | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -131,14 +176,26 @@ export default function LoanDetailsPage() {
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
   const [callLogsData, setCallLogsData] = useState<CallLogsResponse | null>(null);
   const [selectedInstallment, setSelectedInstallment] = useState<Installment | null>(null);
-
-  // Add state
-const [isSendSMSModalOpen, setIsSendSMSModalOpen] = useState(false);
-
-// Add function to refresh SMS logs after sending
-const handleSMSSent = () => {
-  fetchLoanDetails(); // refresh all data (SMS logs included)
-};
+  const [isSendSMSModalOpen, setIsSendSMSModalOpen] = useState(false);
+  
+  // Demand letter states
+  const [isDemandLetterModalOpen, setIsDemandLetterModalOpen] = useState(false);
+  const [isEditDemandLetterModalOpen, setIsEditDemandLetterModalOpen] = useState(false);
+  const [demandLetterData, setDemandLetterData] = useState<DemandLetterData | null>(null);
+  const [isGeneratingDemandLetter, setIsGeneratingDemandLetter] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [isDownloadingPDF, setIsDownloadingPDF] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    customer_name: '',
+    id_number: '',
+    address_line1: '',
+    address_line2: '',
+    phone: '',
+    email: '',
+    amount_due: 0,
+    reference: ''
+  });
 
   useEffect(() => {
     if (loanId) {
@@ -167,7 +224,6 @@ const handleSMSSent = () => {
 
   const fetchCallLogsForLoan = async () => {
     if (!loanDetails?.main_loan.loan_id) return;
-    console.log('Fetching call logs for loan:', loanDetails.main_loan.loan_id);
     try {
       const client = apiClient.getClient();
       const response = await client.get(`/call-logs/for_loan/?loan_id=${loanDetails.main_loan.loan_id}`);
@@ -178,7 +234,6 @@ const handleSMSSent = () => {
   };
 
   const handleViewInstallment = (installmentId: number) => {
-    // Find the installment by installment_id to get its UUID
     const installment = loanDetails?.installments.find(inst => inst.installment_id === installmentId);
     if (installment?.id) {
       router.push(`/installments/${installment.id}`);
@@ -186,7 +241,6 @@ const handleSMSSent = () => {
   };
 
   const handleViewCallLog = (callId: string) => {
-    // Open call log detail page – requires view permission (optional guard)
     if (hasAccess('view_calllog')) {
       router.push(`/call_logs/${callId}`);
     }
@@ -196,11 +250,6 @@ const handleSMSSent = () => {
     setIsCreateCallModalOpen(true);
   };
 
-  const handleAddPaymentReminder = (installment?: Installment) => {
-    setSelectedInstallment(installment || null);
-    setIsReminderModalOpen(true);
-  };
-
   const handleCallLogSuccess = () => {
     fetchLoanDetails();
     if (activeTab === 'calls') {
@@ -208,6 +257,207 @@ const handleSMSSent = () => {
     }
   };
 
+  const handleSMSSent = () => {
+    fetchLoanDetails();
+  };
+
+  // Demand Letter Handlers
+  const handleGenerateDemandLetter = async (sendEmail: boolean = false) => {
+    setIsGeneratingDemandLetter(true);
+    setShowDropdown(false);
+    try {
+      const client = apiClient.getClient();
+      const response = await client.post('/loan-processor/generate-demand-letter/', {
+        loan_id: loanId,
+        preview: false,
+        send_email: sendEmail
+      });
+      
+      setDemandLetterData(response.data);
+      setIsDemandLetterModalOpen(true);
+      
+      if (sendEmail && response.data.email_sent) {
+        alert('Demand letter generated and sent to customer email!');
+      } else if (sendEmail && !response.data.email_sent) {
+        alert('Demand letter generated but email could not be sent. Customer may not have an email address.');
+      }
+    } catch (error: any) {
+      console.error('Error generating demand letter:', error);
+      alert(error.response?.data?.error || 'Failed to generate demand letter');
+    } finally {
+      setIsGeneratingDemandLetter(false);
+    }
+  };
+
+  const handlePreviewDemandLetter = async () => {
+    setIsGeneratingDemandLetter(true);
+    setShowDropdown(false);
+    try {
+      const client = apiClient.getClient();
+      const response = await client.post('/loan-processor/preview-demand-letter/', {
+        loan_id: loanId
+      });
+      
+      // Open preview in new window with the HTML
+      const previewWindow = window.open();
+      if (previewWindow) {
+        previewWindow.document.write(response.data.preview_html);
+        previewWindow.document.close();
+      }
+    } catch (error: any) {
+      console.error('Error previewing demand letter:', error);
+      alert(error.response?.data?.error || 'Failed to preview demand letter');
+    } finally {
+      setIsGeneratingDemandLetter(false);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!demandLetterData?.document_id) {
+      alert('Document ID not available. Please regenerate the demand letter.');
+      return;
+    }
+
+    setIsDownloadingPDF(true);
+    setShowDropdown(false);
+    
+    try {
+      const client = apiClient.getClient();
+      const pdfUrl = `/loan-processor/serve-pdf/${loanId}/${demandLetterData.document_id}/`;
+      
+      console.log('Downloading PDF from:', pdfUrl);
+      
+      const response = await client.get(pdfUrl, {
+        responseType: 'blob'
+      });
+      
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `demand_letter_${demandLetterData.reference || 'document'}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+    } catch (error: any) {
+      console.error('Error downloading PDF:', error);
+      
+      if (error.response?.status === 401) {
+        alert('Authentication failed. Please log in again.');
+      } else if (error.response?.status === 404) {
+        alert('Document not found. Please regenerate the demand letter.');
+      } else if (error.response?.data instanceof Blob) {
+        const text = await error.response.data.text();
+        try {
+          const errorData = JSON.parse(text);
+          alert(errorData.error || 'Failed to download PDF');
+        } catch {
+          alert('Failed to download PDF. Please try again.');
+        }
+      } else {
+        alert(error.response?.data?.error || 'Failed to download PDF. Please try again.');
+      }
+    } finally {
+      setIsDownloadingPDF(false);
+    }
+  };
+
+const handleEditDemandLetter = async () => {
+  // Validate required fields
+  if (!editFormData.customer_name) {
+    alert('Customer name is required');
+    return;
+  }
+  if (!editFormData.phone) {
+    alert('Phone number is required');
+    return;
+  }
+  
+  setIsGeneratingDemandLetter(true);
+  try {
+    const client = apiClient.getClient();
+    const response = await client.post(`/loan-processor/edit-demand-letter/${loanId}/`, editFormData);
+    
+    // Update the demand letter data with the new regenerated version
+    setDemandLetterData({
+      ...demandLetterData!,
+      preview_html: response.data.preview_html,
+      document_id: response.data.document_id,
+      verification_code: response.data.verification_code,
+      pdf_url: response.data.pdf_url,
+      letter_data: response.data.letter_data,
+      amount_due: response.data.amount_due,
+      reference: response.data.reference,
+      customer_name: response.data.customer_name,
+      generated_at: response.data.generated_at,
+      message: response.data.message
+    });
+    
+    // Show appropriate message based on email change
+    if (response.data.email_changed) {
+      alert(
+        `✅ Demand letter updated and regenerated successfully!\n\n` +
+        `📧 Email address was changed from ${response.data.old_email || 'Not set'} to ${response.data.new_email || 'Not set'}.\n\n` +
+        `⚠️ Future emails will be sent to the new address only. The old email will NOT receive any copies.`
+      );
+    } else {
+      alert('✅ Demand letter updated and regenerated successfully! A new document has been created.');
+    }
+    
+    setIsEditDemandLetterModalOpen(false);
+    
+  } catch (error: any) {
+    console.error('Error editing demand letter:', error);
+    const errorMessage = error.response?.data?.error || 'Failed to edit demand letter';
+    alert(`❌ Error: ${errorMessage}`);
+  } finally {
+    setIsGeneratingDemandLetter(false);
+  }
+};
+
+// Update the send email handler to use the current email from letter_data
+const handleSendDemandLetterEmail = async () => {
+  setIsSendingEmail(true);
+  try {
+    const client = apiClient.getClient();
+    const response = await client.post('/loan-processor/send-demand-letter-email/', {
+      loan_id: loanId,
+      cc: []
+    });
+    
+    if (response.data.success) {
+      alert(`Demand letter sent successfully to ${response.data.recipient}!`);
+    } else {
+      alert('Failed to send email. Please check email address.');
+    }
+  } catch (error: any) {
+    console.error('Error sending demand letter email:', error);
+    if (error.response?.data?.error?.includes('No email address')) {
+      alert('No email address available. Please edit the demand letter to add an email address first.');
+    } else {
+      alert(error.response?.data?.error || 'Failed to send email');
+    }
+  } finally {
+    setIsSendingEmail(false);
+  }
+};
+  const openEditModal = () => {
+    if (demandLetterData) {
+      setEditFormData({
+        customer_name: demandLetterData.letter_data.customer.name,
+        id_number: demandLetterData.letter_data.customer.id_number,
+        address_line1: demandLetterData.letter_data.customer.address_line1,
+        address_line2: demandLetterData.letter_data.customer.address_line2,
+        phone: demandLetterData.letter_data.customer.phone,
+        email: demandLetterData.letter_data.customer.email,
+        amount_due: demandLetterData.letter_data.loan_info.amount_due,
+        reference: demandLetterData.letter_data.reference
+      });
+      setIsEditDemandLetterModalOpen(true);
+    }
+  };
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -266,13 +516,113 @@ const handleSMSSent = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
+          <Link href="/loans">
+            <Button variant="ghost" size="sm">
+              <ArrowLeft size={16} className="mr-2" />
+              Back
+            </Button>
+          </Link>
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Loan Details</h1>
             <p className="text-gray-600">Loan ID: {main_loan.loan_id}</p>
           </div>
         </div>
         <div className="flex space-x-3">
-          {/* Export button – requires can_export_loans */}
+          {/* Demand Letter Button with Dropdown */}
+          {hasAccess('can_generate_demand_letter') && (
+            <div className="relative">
+              <div className="flex">
+                <Button 
+                  className="bg-red-600 hover:bg-red-700 rounded-r-none"
+                  onClick={() => handleGenerateDemandLetter(false)}
+                  disabled={isGeneratingDemandLetter}
+                >
+                  {isGeneratingDemandLetter ? (
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                  ) : (
+                    <FileWarning size={16} className="mr-2" />
+                  )}
+                  Demand Letter
+                </Button>
+                
+                <button
+                  onClick={() => setShowDropdown(!showDropdown)}
+                  className="px-2 bg-red-700 rounded-r-md hover:bg-red-800 focus:outline-none"
+                  disabled={isGeneratingDemandLetter}
+                >
+                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              
+              {/* Dropdown menu */}
+              {showDropdown && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-10" 
+                    onClick={() => setShowDropdown(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-20 border">
+                    <div className="py-1">
+                      <button
+                        onClick={handlePreviewDemandLetter}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      >
+                        <Eye size={14} className="inline mr-2" />
+                        Preview Only
+                      </button>
+                      <button
+                        onClick={() => handleGenerateDemandLetter(true)}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      >
+                        <Send size={14} className="inline mr-2" />
+                        Generate & Send Email
+                      </button>
+                      {demandLetterData && (
+                        <>
+                          <hr className="my-1" />
+                          <button
+                            onClick={openEditModal}
+                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          >
+                            <Edit size={14} className="inline mr-2" />
+                            Edit & Regenerate
+                          </button>
+                          <button
+                            onClick={handleDownloadPDF}
+                            disabled={isDownloadingPDF}
+                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isDownloadingPDF ? (
+                              <Loader2 size={14} className="inline mr-2 animate-spin" />
+                            ) : (
+                              <Download size={14} className="inline mr-2" />
+                            )}
+                            Download PDF
+                          </button>
+                          <button
+                            onClick={handleSendDemandLetterEmail}
+                            disabled={isSendingEmail}
+                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          >
+                            {isSendingEmail ? (
+                              <Loader2 size={14} className="inline mr-2 animate-spin" />
+                            ) : (
+                              <Mail size={14} className="inline mr-2" />
+                            )}
+                            Resend Email
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Export button */}
           {hasAccess('can_export_loans') && (
             <Button variant="outline" onClick={() => window.print()}>
               <Download size={16} className="mr-2" />
@@ -280,7 +630,7 @@ const handleSMSSent = () => {
             </Button>
           )}
 
-          {/* Log Call button – requires add_calllog */}
+          {/* Log Call button */}
           {hasAccess('add_calllog') && (
             <Button 
               className="bg-blue-600 hover:bg-blue-700"
@@ -350,15 +700,15 @@ const handleSMSSent = () => {
 
           {/* Quick Actions */}
           <div className="mt-4 flex flex-wrap gap-2">
-              {hasAccess('add_smslog') && (
-                <Button 
-                  variant="outline"
-                  onClick={() => setIsSendSMSModalOpen(true)}
-                >
-                  <MessageSquare size={16} className="mr-2" />
-                  Send SMS
-                </Button>
-              )}
+            {hasAccess('add_smslog') && (
+              <Button 
+                variant="outline"
+                onClick={() => setIsSendSMSModalOpen(true)}
+              >
+                <MessageSquare size={16} className="mr-2" />
+                Send SMS
+              </Button>
+            )}
             {hasAccess('add_calllog') && (
               <Button size="sm" variant="outline" onClick={handleLogCall}>
                 <PhoneCall size={14} className="mr-2" />
@@ -475,7 +825,6 @@ const handleSMSSent = () => {
               <InstallmentTable 
                 installments={installments}
                 onViewDetails={handleViewInstallment}
-                // onAddReminder={handleAddPaymentReminder} – if you uncomment, guard inside table
               />
             </div>
           )}
@@ -555,7 +904,6 @@ const handleSMSSent = () => {
                             <p className="mt-2 text-sm text-gray-600 line-clamp-2">{call.notes}</p>
                           )}
                         </div>
-                        {/* View button – requires view_calllog permission (optional) */}
                         {hasAccess('view_calllog') && (
                           <Button variant="ghost" size="sm" className="ml-4">
                             <Eye size={16} />
@@ -647,7 +995,7 @@ const handleSMSSent = () => {
         </CardContent>
       </Card>
 
-      {/* Create Call Log Modal */}
+      {/* Modals */}
       <CreateCallLogModal
         isOpen={isCreateCallModalOpen}
         onClose={() => setIsCreateCallModalOpen(false)}
@@ -667,6 +1015,362 @@ const handleSMSSent = () => {
         phoneNumber={main_loan.phone_number}
         currentMonthInstallmentId={current_month_installment?.id}
       />
+
+      {/* Demand Letter Modal */}
+      {isDemandLetterModalOpen && demandLetterData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex justify-between items-center p-4 border-b">
+              <h2 className="text-xl font-semibold">
+                Demand Letter - {demandLetterData.reference}
+              </h2>
+              <div className="flex space-x-2">
+                <Button variant="outline" size="sm" onClick={openEditModal}>
+                  <Edit size={16} className="mr-2" />
+                  Edit & Regenerate
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleDownloadPDF}
+                  disabled={isDownloadingPDF}
+                >
+                  {isDownloadingPDF ? (
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                  ) : (
+                    <Download size={16} className="mr-2" />
+                  )}
+                  Download PDF
+                </Button>
+                <Button 
+                  size="sm" 
+                  onClick={handleSendDemandLetterEmail}
+                  disabled={isSendingEmail}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {isSendingEmail ? (
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                  ) : (
+                    <Mail size={16} className="mr-2" />
+                  )}
+                  Send Email
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setIsDemandLetterModalOpen(false)}>
+                  <X size={16} />
+                </Button>
+              </div>
+            </div>
+            
+            {/* Content */}
+            <div className="flex-1 overflow-auto p-4">
+              {/* Letter info summary */}
+              <div className="bg-gray-50 p-4 rounded-lg mb-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500">Document ID</p>
+                    <p className="text-sm font-mono">{demandLetterData.document_id}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Verification Code</p>
+                    <p className="text-sm font-mono">{demandLetterData.verification_code}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Amount Due</p>
+                    <p className="text-sm font-bold text-red-600">
+                      KES {demandLetterData.amount_due.toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Generated</p>
+                    <p className="text-sm">
+                      {new Date(demandLetterData.generated_at).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Letter preview */}
+              {demandLetterData.preview_html ? (
+                <div 
+                  className="border rounded-lg p-4 bg-white overflow-auto max-h-[500px]"
+                  dangerouslySetInnerHTML={{ __html: demandLetterData.preview_html }}
+                />
+              ) : (
+                <div className="text-center py-12">
+                  <Loader2 size={32} className="mx-auto animate-spin text-gray-400" />
+                  <p className="mt-2 text-gray-500">Loading preview...</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Demand Letter Modal - With Regenerate Warning */}
+   {/* Edit Demand Letter Modal - Full Updated Version */}
+{isEditDemandLetterModalOpen && demandLetterData && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+    <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+      {/* Header */}
+      <div className="flex justify-between items-center p-4 border-b">
+        <h2 className="text-xl font-semibold">Edit & Regenerate Demand Letter</h2>
+        <Button variant="ghost" size="sm" onClick={() => setIsEditDemandLetterModalOpen(false)}>
+          <X size={16} />
+        </Button>
+      </div>
+      
+      {/* Warning Banner - Regeneration Notice */}
+      <div className="bg-yellow-50 p-4 border-b border-yellow-200">
+        <div className="flex items-start">
+          <AlertTriangle className="h-5 w-5 text-yellow-600 mr-3 mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-yellow-800">
+            <p className="font-medium mb-1">⚠️ Important: This will regenerate the document</p>
+            <p>When you save changes, a <strong>new demand letter</strong> will be generated with a new document ID and verification code. The old version will be replaced. Make sure to download or email the new version.</p>
+          </div>
+        </div>
+      </div>
+      
+      {/* Form Content */}
+      <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* Customer Name & ID Number */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Customer Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={editFormData.customer_name}
+              onChange={(e) => setEditFormData({...editFormData, customer_name: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              ID Number
+            </label>
+            <input
+              type="text"
+              value={editFormData.id_number}
+              onChange={(e) => setEditFormData({...editFormData, id_number: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              placeholder="e.g., 30123768"
+            />
+          </div>
+        </div>
+
+        {/* Address Line 1 */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Address Line 1
+          </label>
+          <input
+            type="text"
+            value={editFormData.address_line1}
+            onChange={(e) => setEditFormData({...editFormData, address_line1: e.target.value})}
+            placeholder="P.O BOX 35 - 60402"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+
+        {/* Address Line 2 (City) */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Address Line 2 (City)
+          </label>
+          <input
+            type="text"
+            value={editFormData.address_line2}
+            onChange={(e) => setEditFormData({...editFormData, address_line2: e.target.value})}
+            placeholder="IGOJI"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+
+        {/* Phone & Email */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Phone Number <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="tel"
+              value={editFormData.phone}
+              onChange={(e) => setEditFormData({...editFormData, phone: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">Primary contact number</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Email Address
+            </label>
+            <input
+              type="email"
+              value={editFormData.email}
+              onChange={(e) => setEditFormData({...editFormData, email: e.target.value})}
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+                editFormData.email !== demandLetterData?.letter_data.customer.email 
+                  ? 'border-yellow-500 bg-yellow-50' 
+                  : 'border-gray-300'
+              }`}
+              placeholder="customer@example.com"
+            />
+            {/* Email change warning */}
+            {editFormData.email !== demandLetterData?.letter_data.customer.email && (
+              <div className="flex items-start mt-1">
+                <AlertTriangle size={12} className="text-yellow-600 mr-1 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-yellow-600">
+                  Email changed from <strong>{demandLetterData?.letter_data.customer.email || 'Not set'}</strong> to <strong>{editFormData.email || 'Not set'}</strong>. Future emails will be sent to the new address only.
+                </p>
+              </div>
+            )}
+            {/* No email warning */}
+            {!editFormData.email && (
+              <div className="flex items-start mt-1">
+                <AlertTriangle size={12} className="text-red-600 mr-1 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-red-600">
+                  No email address provided. You won't be able to send the demand letter via email until you add an email address.
+                </p>
+              </div>
+            )}
+            {/* Email unchanged info */}
+            {editFormData.email === demandLetterData?.letter_data.customer.email && editFormData.email && (
+              <p className="text-xs text-green-600 mt-1">
+                ✓ Email unchanged. Current email: {editFormData.email}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Amount Due & Reference */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Amount Due (KES) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              value={editFormData.amount_due}
+              onChange={(e) => setEditFormData({...editFormData, amount_due: parseFloat(e.target.value)})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">This will update the amount due in the letter</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reference Number
+            </label>
+            <input
+              type="text"
+              value={editFormData.reference}
+              onChange={(e) => setEditFormData({...editFormData, reference: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              placeholder="e.g., CHB-KTG-057"
+            />
+            <p className="text-xs text-gray-500 mt-1">This is the loan offer ID from the system</p>
+          </div>
+        </div>
+
+        {/* Changes Summary */}
+        {(editFormData.customer_name !== demandLetterData?.letter_data.customer.name ||
+          editFormData.id_number !== demandLetterData?.letter_data.customer.id_number ||
+          editFormData.address_line1 !== demandLetterData?.letter_data.customer.address_line1 ||
+          editFormData.address_line2 !== demandLetterData?.letter_data.customer.address_line2 ||
+          editFormData.phone !== demandLetterData?.letter_data.customer.phone ||
+          editFormData.email !== demandLetterData?.letter_data.customer.email ||
+          editFormData.amount_due !== demandLetterData?.letter_data.loan_info.amount_due ||
+          editFormData.reference !== demandLetterData?.letter_data.reference) && (
+          <div className="bg-blue-50 p-3 rounded-lg">
+            <p className="text-sm font-medium text-blue-800 mb-2">📝 Changes to be applied:</p>
+            <ul className="text-xs text-blue-700 space-y-1">
+              {editFormData.customer_name !== demandLetterData?.letter_data.customer.name && (
+                <li>• Customer name: "{demandLetterData?.letter_data.customer.name}" → "{editFormData.customer_name}"</li>
+              )}
+              {editFormData.id_number !== demandLetterData?.letter_data.customer.id_number && (
+                <li>• ID number: "{demandLetterData?.letter_data.customer.id_number || 'Not set'}" → "{editFormData.id_number || 'Not set'}"</li>
+              )}
+              {editFormData.address_line1 !== demandLetterData?.letter_data.customer.address_line1 && (
+                <li>• Address line 1: "{demandLetterData?.letter_data.customer.address_line1 || 'Not set'}" → "{editFormData.address_line1 || 'Not set'}"</li>
+              )}
+              {editFormData.address_line2 !== demandLetterData?.letter_data.customer.address_line2 && (
+                <li>• City: "{demandLetterData?.letter_data.customer.address_line2 || 'Not set'}" → "{editFormData.address_line2 || 'Not set'}"</li>
+              )}
+              {editFormData.phone !== demandLetterData?.letter_data.customer.phone && (
+                <li>• Phone: "{demandLetterData?.letter_data.customer.phone}" → "{editFormData.phone}"</li>
+              )}
+              {editFormData.email !== demandLetterData?.letter_data.customer.email && (
+                <li>• Email: "{demandLetterData?.letter_data.customer.email || 'Not set'}" → "{editFormData.email || 'Not set'}"</li>
+              )}
+              {editFormData.amount_due !== demandLetterData?.letter_data.loan_info.amount_due && (
+                <li>• Amount due: KES {demandLetterData?.letter_data.loan_info.amount_due.toLocaleString()} → KES {editFormData.amount_due.toLocaleString()}</li>
+              )}
+              {editFormData.reference !== demandLetterData?.letter_data.reference && (
+                <li>• Reference: "{demandLetterData?.letter_data.reference}" → "{editFormData.reference}"</li>
+              )}
+            </ul>
+          </div>
+        )}
+
+        {/* Information Note */}
+        <div className="bg-gray-50 p-3 rounded-lg">
+          <p className="text-sm text-gray-600">
+            <strong>ℹ️ Note:</strong> Loan information like principal amount, loan date, 
+            and installment details cannot be edited here. Please contact admin if 
+            corrections are needed.
+          </p>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="flex justify-end space-x-3 p-4 border-t">
+        <Button 
+          variant="outline" 
+          onClick={() => {
+            // Reset form to original values
+            if (demandLetterData) {
+              setEditFormData({
+                customer_name: demandLetterData.letter_data.customer.name,
+                id_number: demandLetterData.letter_data.customer.id_number,
+                address_line1: demandLetterData.letter_data.customer.address_line1,
+                address_line2: demandLetterData.letter_data.customer.address_line2,
+                phone: demandLetterData.letter_data.customer.phone,
+                email: demandLetterData.letter_data.customer.email,
+                amount_due: demandLetterData.letter_data.loan_info.amount_due,
+                reference: demandLetterData.letter_data.reference
+              });
+            }
+            setIsEditDemandLetterModalOpen(false);
+          }}
+        >
+          Cancel
+        </Button>
+        <Button 
+          onClick={handleEditDemandLetter} 
+          disabled={isGeneratingDemandLetter || !editFormData.customer_name || !editFormData.phone}
+          className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isGeneratingDemandLetter ? (
+            <>
+              <Loader2 size={16} className="mr-2 animate-spin" />
+              Regenerating...
+            </>
+          ) : (
+            <>
+              <FileWarning size={16} className="mr-2" />
+              Save & Regenerate
+            </>
+          )}
+        </Button>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }
