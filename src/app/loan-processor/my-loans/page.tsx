@@ -851,7 +851,9 @@ export default function MyLoansPage() {
               currentPage: data.page,
               pageSize: data.page_size,
               onPageChange: (newPage: React.SetStateAction<number>) => setPage(newPage),
-              serverSide: true
+              serverSide: true,
+              hasNextPage: data.page < data.total_pages,
+              hasPreviousPage : data.page > 1
             }}
             serverSideSearch={searchTerm}
             onServerSearchChange={handleServerSearchChange}

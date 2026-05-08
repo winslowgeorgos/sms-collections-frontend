@@ -75,7 +75,7 @@ export default function UnassignedLoansPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [filters, setFilters] = useState<UnassignedLoanFilters>({
     page: 1,
-    page_size: 20,
+    page_size: 400,
     officer_id: undefined,
     officer_username: undefined,
     loan_id: undefined,
@@ -164,7 +164,7 @@ export default function UnassignedLoansPage() {
   const resetFilters = () => {
     setFilters({
       page: 1,
-      page_size: 20,
+      page_size: 400,
       officer_id: undefined,
       officer_username: undefined,
       loan_id: undefined,
@@ -191,7 +191,7 @@ export default function UnassignedLoansPage() {
     });
     setTempFilters({
       page: 1,
-      page_size: 20,
+      page_size: 400,
       ordering: '-disburse_time',
       current_month_only: false,
       unassigned_only: true
@@ -920,7 +920,7 @@ export default function UnassignedLoansPage() {
           <Button variant="outline" onClick={() => {
             setTempFilters({
               page: 1,
-              page_size: 20,
+              page_size: 400,
               ordering: '-disburse_time',
               current_month_only: false,
               unassigned_only: true
