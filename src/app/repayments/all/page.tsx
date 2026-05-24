@@ -137,8 +137,8 @@ export default function AllPaymentsPage() {
   const [filters, setFilters] = useState<FilterParams>({
     page: 1,
     page_size: 20,
-    start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    end_date: new Date().toISOString().split('T')[0],
+    // start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    // end_date: new Date().toISOString().split('T')[0],
     ordering: '-transaction_date'
   });
 
@@ -620,8 +620,8 @@ export default function AllPaymentsPage() {
                 pageSize: filters.page_size,
                 onPageChange: handlePageChange,
                 serverSide: true,
-                hasNextPage: !!pagination.next,
-                hasPreviousPage: !!pagination.previous,
+                hasNextPage: pagination.next !== null,
+                hasPreviousPage: pagination.previous !== null,
               }}
             />
           )}

@@ -9,7 +9,6 @@ import { Modal } from '@/components/ui/modal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { apiClient } from '@/lib/api';
 import { usePermissions } from '@/context/permission-context';
-
 import {
   LayoutDashboard, TrendingUp, Users, DollarSign, Clock,
   Calendar, Download, RefreshCw, Filter, Eye,
@@ -38,9 +37,10 @@ import {
 import { ActionGuard } from '@/components/auth/action-guard';
 
 // ============================================================================
-// TYPES & INTERFACES
+// TYPES & INTERFACES - MUST BE OUTSIDE COMPONENT
 // ============================================================================
 
+// Officer Performance Filters Interface
 interface OfficerPerformanceFilters {
   startDate: string;
   endDate: string;
@@ -48,6 +48,7 @@ interface OfficerPerformanceFilters {
   officerId: string;
 }
 
+// Officer Stats Interface
 interface OfficerStats {
   officer: {
     id: number;
@@ -62,55 +63,58 @@ interface OfficerStats {
       period_type: string;
       days_in_period: number;
     };
-    snapshots_used: {
-      daily_snapshot_date: string | null;
-      monthly_snapshot_date: string | null;
-    };
-    daily_target: number;
-    monthly_target: number;
-    daily_current_balance: number;
-    monthly_current_balance: number;
+    officer_daily_target: number;
+    officer_monthly_target: number;
+    officer_current_daily_balance: number;
+    officer_current_monthly_balance: number;
     collected_during_period: number;
     collected_mtd: number;
+    avg_daily_collection: number;
     collection_rate_vs_daily_target: number;
     collection_rate_vs_monthly_target: number;
-    status: 'exceeding' | 'on_track' | 'behind' | 'critical';
-    needs_attention: boolean;
-    promise_metrics?: {
-      promises_created_count: number;
-      promises_created_amount: number;
-      promises_fulfilled_count: number;
-      promises_fulfilled_amount: number;
+    daily_target_achievement: number;
+    monthly_target_achievement: number;
+    daily_installments_count: number;
+    assigned_installments_count: number;
+    assigned_cumulative_balance: number;
+    resolved_during_period: number;
+    calls_made_during_period: number;
+    successful_calls_during_period: number;
+    call_success_rate: number;
+    promises_received_during_period: number;
+    promised_amount_during_period: number;
+    promise_metrics: {
       active_promises_count: number;
-      active_promises_amount: number;
+      active_promises_total: number;
       overdue_promises_count: number;
-      overdue_promises_amount: number;
+      overdue_promises_total: number;
+      fulfilled_during_period_count: number;
+      fulfilled_during_period_total: number;
+      promises_created_during_period_count: number;
+      promises_created_during_period_amount: number;
       fulfillment_rate: number;
       promise_collection_rate: number;
+      average_promise_amount: number;
+      average_fulfilled_amount: number;
     };
+    status: 'exceeding' | 'on_track' | 'behind' | 'critical';
+    needs_attention: boolean;
   };
   trend: {
     dates: string[];
     cumulative_balances: number[];
     daily_targets: number[];
     collected: number[];
+    promises_received: number[];
+    promised_amount: number[];
+    collection_rates: number[];
     achievement_vs_target: number[];
     calls_made: number[];
     call_success_rates: number[];
   };
 }
 
-interface OfficerDetailModalData {
-  officer: {
-    id: number;
-    username: string;
-    full_name: string;
-    email: string;
-  };
-  metrics: any;
-  trend: any;
-}
-
+// CurrentMonthMetrics interface
 interface CurrentMonthMetrics {
   date: string;
   month_start: string;
@@ -180,6 +184,7 @@ interface CurrentMonthMetrics {
   };
 }
 
+// CurrentWeekMetrics interface
 interface CurrentWeekMetrics {
   date: string;
   week_start: string;
@@ -256,6 +261,7 @@ interface CurrentWeekMetrics {
   };
 }
 
+// Schedule Management Types
 interface ScheduleConfig {
   id: string;
   name: string;
@@ -600,10 +606,12 @@ interface CooldownStatus {
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'];
 
+
 // ============================================================================
-// HELPER COMPONENTS
+// HELPER COMPONENTS (Must be defined before use)
 // ============================================================================
 
+// Info Hint Component
 const InfoHint = ({ text }: { text: string }) => (
   <div className="relative inline-block group ml-1">
     <Info size={14} className="text-gray-400 cursor-help hover:text-blue-500" />
@@ -614,6 +622,7 @@ const InfoHint = ({ text }: { text: string }) => (
   </div>
 );
 
+// Officer Performance Filters Component
 const OfficerPerformanceFilters = ({ 
   filters, 
   onFilterChange, 
@@ -712,163 +721,210 @@ const OfficerPerformanceFilters = ({
   );
 };
 
-const OfficerDetailModal = ({ 
-  officer, 
-  isOpen, 
-  onClose,
-  formatCurrency,
-  formatPercent,
-  formatNumber
-}: { 
-  officer: OfficerDetailModalData | null;
-  isOpen: boolean;
-  onClose: () => void;
+// Officer Stats Card Component
+const OfficerStatsCard = ({ officer, formatCurrency, formatPercent, getStatusBadgeClass }: { 
+  officer: OfficerStats; 
   formatCurrency: (value: number) => string;
   formatPercent: (value: number) => string;
-  formatNumber: (value: number) => string;
+  getStatusBadgeClass: (status: string) => string;
 }) => {
-  if (!officer) return null;
-  
+  const [expanded, setExpanded] = useState(false);
   const metrics = officer.metrics;
-  const promiseMetrics = metrics.promise_metrics || {};
   
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={`Officer Details: ${officer.officer.full_name || officer.officer.username}`}
-      size="lg"
-    >
-      <div className="space-y-4 max-h-[70vh] overflow-y-auto">
-        {/* Basic Info */}
-        <div className="bg-gray-50 p-3 rounded-lg">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div>
-              <span className="text-gray-500">Username:</span>
-              <span className="ml-2 font-medium">{officer.officer.username}</span>
+    <Card className="overflow-hidden">
+      <CardContent className="p-4">
+        <div className="flex justify-between items-start mb-3">
+          <div className="flex items-center">
+            <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+              <span className="text-sm font-medium text-blue-600">
+                {officer.officer.username.charAt(0).toUpperCase()}
+              </span>
             </div>
             <div>
-              <span className="text-gray-500">Email:</span>
-              <span className="ml-2 font-medium">{officer.officer.email}</span>
+              <h3 className="font-semibold text-gray-900">{officer.officer.full_name || officer.officer.username}</h3>
+              <p className="text-xs text-gray-500">{officer.officer.email}</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {metrics.period.start_date} to {metrics.period.end_date} ({metrics.period.days_in_period} days)
+              </p>
             </div>
-            <div>
-              <span className="text-gray-500">Period:</span>
-              <span className="ml-2 font-medium">{metrics.period.start_date} to {metrics.period.end_date}</span>
-            </div>
-            <div>
-              <span className="text-gray-500">Days in Period:</span>
-              <span className="ml-2 font-medium">{metrics.period.days_in_period} days</span>
-            </div>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className={`px-2 py-1 text-xs rounded-full ${getStatusBadgeClass(metrics.status)}`}>
+              {metrics.status.toUpperCase()}
+            </span>
+            {metrics.needs_attention && (
+              <span className="text-xs text-red-500 mt-1">⚠ Needs Attention</span>
+            )}
           </div>
         </div>
         
-        {/* Monthly Metrics */}
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">Monthly Performance</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-blue-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Monthly Target (Static)</p>
-              <p className="text-lg font-bold text-blue-700">{formatCurrency(metrics.monthly_target)}</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div className="bg-blue-50 p-2 rounded-lg">
+            <div className="flex items-center">
+              <Target size={14} className="text-blue-600 mr-1" />
+              <p className="text-xs text-gray-600">Collected</p>
+              <InfoHint text="Total amount collected during the selected period" />
             </div>
-            <div className="bg-green-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Collected MTD</p>
-              <p className="text-lg font-bold text-green-700">{formatCurrency(metrics.collected_mtd)}</p>
+            <p className="text-lg font-bold text-blue-700">{formatCurrency(metrics.collected_during_period)}</p>
+            <p className="text-xs text-gray-500">Avg daily: {formatCurrency(metrics.avg_daily_collection)}</p>
+          </div>
+          
+          <div className="bg-green-50 p-2 rounded-lg">
+            <div className="flex items-center">
+              <Target size={14} className="text-green-600 mr-1" />
+              <p className="text-xs text-gray-600">Collection Rate</p>
+              <InfoHint text="Percentage of daily target achieved during the period" />
             </div>
-            <div className="bg-orange-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Current Monthly Balance</p>
-              <p className="text-lg font-bold text-orange-700">{formatCurrency(metrics.monthly_current_balance)}</p>
+            <p className="text-lg font-bold text-green-700">{formatPercent(metrics.collection_rate_vs_daily_target)}</p>
+            <p className="text-xs text-gray-500">vs Monthly: {formatPercent(metrics.collection_rate_vs_monthly_target)}</p>
+          </div>
+          
+          <div className="bg-purple-50 p-2 rounded-lg">
+            <div className="flex items-center">
+              <Target size={14} className="text-purple-600 mr-1" />
+              <p className="text-xs text-gray-600">Daily Target</p>
+              <InfoHint text="Static target from snapshot for the end date" />
             </div>
-            <div className="bg-purple-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Collection Rate (Monthly)</p>
-              <p className="text-lg font-bold text-purple-700">{formatPercent(metrics.collection_rate_vs_monthly_target)}</p>
+            <p className="text-lg font-bold text-purple-700">{formatCurrency(metrics.officer_daily_target)}</p>
+            <p className="text-xs text-gray-500">Achieved: {formatPercent(metrics.daily_target_achievement)}</p>
+          </div>
+          
+          <div className="bg-orange-50 p-2 rounded-lg">
+            <div className="flex items-center">
+              <Target size={14} className="text-orange-600 mr-1" />
+              <p className="text-xs text-gray-600">Current Balance</p>
+              <InfoHint text="Actual remaining balance for installments due by end date" />
             </div>
+            <p className="text-lg font-bold text-orange-700">{formatCurrency(metrics.officer_current_daily_balance)}</p>
+            <p className="text-xs text-gray-500">Monthly: {formatCurrency(metrics.officer_current_monthly_balance)}</p>
           </div>
         </div>
         
-        {/* Daily Metrics */}
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">Daily Performance (as of {metrics.period.end_date})</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-blue-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Daily Target (Static)</p>
-              <p className="text-lg font-bold text-blue-700">{formatCurrency(metrics.daily_target)}</p>
-            </div>
-            <div className="bg-green-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Collected During Period</p>
-              <p className="text-lg font-bold text-green-700">{formatCurrency(metrics.collected_during_period)}</p>
-            </div>
-            <div className="bg-orange-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Current Daily Balance</p>
-              <p className="text-lg font-bold text-orange-700">{formatCurrency(metrics.daily_current_balance)}</p>
-            </div>
-            <div className="bg-purple-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Collection Rate (Daily)</p>
-              <p className="text-lg font-bold text-purple-700">{formatPercent(metrics.collection_rate_vs_daily_target)}</p>
-            </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+          <div className="flex justify-between items-center text-sm border-b border-gray-100 pb-1">
+            <span className="text-gray-500 flex items-center">
+              Calls Made
+              <InfoHint text="Total calls made during the period" />
+            </span>
+            <span className="font-medium">{metrics.calls_made_during_period}</span>
+          </div>
+          <div className="flex justify-between items-center text-sm border-b border-gray-100 pb-1">
+            <span className="text-gray-500 flex items-center">
+              Success Rate
+              <InfoHint text="Percentage of calls that resulted in contact/promise" />
+            </span>
+            <span className="font-medium">{formatPercent(metrics.call_success_rate)}</span>
+          </div>
+          <div className="flex justify-between items-center text-sm border-b border-gray-100 pb-1">
+            <span className="text-gray-500 flex items-center">
+              Promises
+              <InfoHint text="Payment promises received during the period" />
+            </span>
+            <span className="font-medium">{metrics.promises_received_during_period}</span>
+          </div>
+          <div className="flex justify-between items-center text-sm border-b border-gray-100 pb-1">
+            <span className="text-gray-500 flex items-center">
+              Resolved
+              <InfoHint text="Installments paid off during the period" />
+            </span>
+            <span className="font-medium">{metrics.resolved_during_period}</span>
           </div>
         </div>
         
-        {/* Promise Metrics */}
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">Promise to Pay Metrics</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-yellow-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Promises Created</p>
-              <p className="text-lg font-bold text-yellow-700">{formatNumber(promiseMetrics.promises_created_count || 0)}</p>
-              <p className="text-xs text-gray-500">Amount: {formatCurrency(promiseMetrics.promises_created_amount || 0)}</p>
-            </div>
-            <div className="bg-green-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Promises Fulfilled</p>
-              <p className="text-lg font-bold text-green-700">{formatNumber(promiseMetrics.promises_fulfilled_count || 0)}</p>
-              <p className="text-xs text-gray-500">Amount: {formatCurrency(promiseMetrics.promises_fulfilled_amount || 0)}</p>
-            </div>
-            <div className="bg-blue-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Active Promises</p>
-              <p className="text-lg font-bold text-blue-700">{formatNumber(promiseMetrics.active_promises_count || 0)}</p>
-              <p className="text-xs text-gray-500">Amount: {formatCurrency(promiseMetrics.active_promises_amount || 0)}</p>
-            </div>
-            <div className="bg-red-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Overdue Promises</p>
-              <p className="text-lg font-bold text-red-700">{formatNumber(promiseMetrics.overdue_promises_count || 0)}</p>
-              <p className="text-xs text-gray-500">Amount: {formatCurrency(promiseMetrics.overdue_promises_amount || 0)}</p>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full text-left text-xs text-blue-600 hover:text-blue-800 mb-2 flex items-center"
+        >
+          {expanded ? '▼' : '▶'} Promise Details
+        </button>
+        
+        {expanded && metrics.promise_metrics && (
+          <div className="bg-gray-50 p-3 rounded-lg mb-3 space-y-2">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Promises Created:</span>
+                <span className="font-medium">{metrics.promise_metrics.promises_created_during_period_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Amount Promised:</span>
+                <span className="font-medium">{formatCurrency(metrics.promise_metrics.promises_created_during_period_amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Promises Fulfilled:</span>
+                <span className="font-medium">{metrics.promise_metrics.fulfilled_during_period_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Amount Fulfilled:</span>
+                <span className="font-medium">{formatCurrency(metrics.promise_metrics.fulfilled_during_period_total)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Fulfillment Rate:</span>
+                <span className={`font-medium ${metrics.promise_metrics.fulfillment_rate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
+                  {formatPercent(metrics.promise_metrics.fulfillment_rate)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Promise Collection Rate:</span>
+                <span className="font-medium">{formatPercent(metrics.promise_metrics.promise_collection_rate)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Active Promises:</span>
+                <span className="font-medium">{metrics.promise_metrics.active_promises_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Active Amount:</span>
+                <span className="font-medium">{formatCurrency(metrics.promise_metrics.active_promises_total)}</span>
+              </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <div className="bg-purple-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Fulfillment Rate</p>
-              <p className="text-lg font-bold text-purple-700">{formatPercent(promiseMetrics.fulfillment_rate || 0)}</p>
-            </div>
-            <div className="bg-indigo-50 p-2 rounded">
-              <p className="text-xs text-gray-500">Promise Collection Rate</p>
-              <p className="text-lg font-bold text-indigo-700">{formatPercent(promiseMetrics.promise_collection_rate || 0)}</p>
-            </div>
-          </div>
+        )}
+        
+        <div className="h-40 mt-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={officer.trend.dates.map((date, idx) => ({
+              date: date.split('-').slice(1).join('/'),
+              collected: officer.trend.collected[idx],
+              daily_target: officer.trend.daily_targets[idx],
+              achievement: officer.trend.achievement_vs_target[idx],
+            }))}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" fontSize={10} />
+              <YAxis yAxisId="left" fontSize={10} />
+              <YAxis yAxisId="right" orientation="right" fontSize={10} />
+              <Tooltip formatter={(value: any, name: string) => {
+                if (name === 'collected' || name === 'daily_target') return formatCurrency(value);
+                if (name === 'achievement') return formatPercent(value);
+                return value;
+              }} />
+              <Legend />
+              <Bar yAxisId="left" dataKey="collected" name="Collected" fill="#8884d8" barSize={20} />
+              <Line yAxisId="left" type="monotone" dataKey="daily_target" name="Daily Target" stroke="#ff7300" strokeWidth={2} dot={false} />
+              <Line yAxisId="right" type="monotone" dataKey="achievement" name="Achievement %" stroke="#82ca9d" strokeWidth={2} />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
         
-        {/* Snapshot Info */}
-        <div className="text-xs text-gray-400 border-t pt-2">
-          <p>Daily Snapshot Used: {metrics.snapshots_used?.daily_snapshot_date || 'N/A'}</p>
-          <p>Monthly Snapshot Used: {metrics.snapshots_used?.monthly_snapshot_date || 'Calculated'}</p>
+        <div className="mt-2 text-right">
+          <Link href={`/analytics/officer/${officer.officer.id}`}>
+            <Button variant="ghost" size="sm">
+              <Eye size={14} className="mr-1" />
+              View Details
+            </Button>
+          </Link>
         </div>
-      </div>
-      
-      <div className="flex justify-end space-x-3 pt-4 border-t mt-4">
-        <Button variant="outline" onClick={onClose}>Close</Button>
-        <Link href={`/analytics/officer/${officer.officer.id}`}>
-          <Button className="bg-blue-600 hover:bg-blue-700">
-            View Full Officer Analytics
-          </Button>
-        </Link>
-      </div>
-    </Modal>
+      </CardContent>
+    </Card>
   );
 };
+
 
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
 export default function AdminAnalyticsDashboard() {
+  // State management
   const [activeTab, setActiveTab] = useState('overview');
   const { hasAccess } = usePermissions();
 
@@ -885,8 +941,6 @@ export default function AdminAnalyticsDashboard() {
   const [filteredOfficerData, setFilteredOfficerData] = useState<OfficerStats[]>([]);
   const [isOfficerLoading, setIsOfficerLoading] = useState(false);
   const [officerExporting, setOfficerExporting] = useState(false);
-  const [selectedOfficerDetail, setSelectedOfficerDetail] = useState<OfficerDetailModalData | null>(null);
-  const [isOfficerDetailModalOpen, setIsOfficerDetailModalOpen] = useState(false);
   
   // Schedule Management State
   const [schedules, setSchedules] = useState<ScheduleConfig[]>([]);
@@ -913,6 +967,7 @@ export default function AdminAnalyticsDashboard() {
   const [customerInsights, setCustomerInsights] = useState<CustomerInsights | null>(null);
   const [forecastData, setForecastData] = useState<ForecastData | null>(null);
 
+  // Pagination State for Schedules
   const [schedulePagination, setSchedulePagination] = useState({
     page: 1,
     page_size: 20,
@@ -920,10 +975,12 @@ export default function AdminAnalyticsDashboard() {
     total_count: 0
   });
 
+  // UI State
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTimeRange, setSelectedTimeRange] = useState<'7d' | '30d' | '90d' | '1y'>('30d');
   const [selectedView, setSelectedView] = useState<'chart' | 'table' | 'grid'>('chart');
   
+  // Modal States
   const [isTriggerJobModalOpen, setIsTriggerJobModalOpen] = useState(false);
   const [isJobDetailsModalOpen, setIsJobDetailsModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -1012,21 +1069,31 @@ export default function AdminAnalyticsDashboard() {
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
-      case 'exceeding': return 'bg-green-100 text-green-800';
-      case 'on_track': return 'bg-blue-100 text-blue-800';
-      case 'behind': return 'bg-yellow-100 text-yellow-800';
-      case 'critical': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'exceeding':
+        return 'bg-green-100 text-green-800';
+      case 'on_track':
+        return 'bg-blue-100 text-blue-800';
+      case 'behind':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'critical':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
   const getRiskLevelBadgeClass = (riskLevel: string) => {
     switch (riskLevel) {
-      case 'very_low': return 'bg-green-100 text-green-800';
-      case 'low': return 'bg-green-100 text-green-800';
-      case 'medium': return 'bg-yellow-100 text-yellow-800';
-      case 'high': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'very_low':
+        return 'bg-green-100 text-green-800';
+      case 'low':
+        return 'bg-green-100 text-green-800';
+      case 'medium':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'high':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -1247,6 +1314,7 @@ export default function AdminAnalyticsDashboard() {
     }
   };
 
+  // Schedule Management API Calls
   const fetchSchedules = async (filters?: { active?: string; frequency?: string; search?: string }) => {
     try {
       const client = apiClient.getClient();
@@ -1549,7 +1617,7 @@ export default function AdminAnalyticsDashboard() {
         skip_repayments: false
       };
 
-      const response = await client.post('/loan-processor/trigger-scheduled-command/', payload);
+      await client.post('/loan-processor/trigger-scheduled-command/', payload);
       alert(`Job triggered successfully!`);
       fetchRecentJobs();
     } catch (error: any) {
@@ -1659,6 +1727,7 @@ export default function AdminAnalyticsDashboard() {
     }
   };
 
+  // Initial data load
   useEffect(() => {
     fetchAllData();
     fetchSchedules();
@@ -1666,6 +1735,7 @@ export default function AdminAnalyticsDashboard() {
     fetchFrequencyOptions();
   }, [selectedTimeRange, schedulePagination.page, schedulePagination.page_size]);
 
+  // Update filtered officer data when officerPerformance changes
   useEffect(() => {
     if (officerPerformance && officerPerformance.performance_data) {
       setFilteredOfficerData(officerPerformance.performance_data);
@@ -1690,7 +1760,7 @@ export default function AdminAnalyticsDashboard() {
         </div>
 
         <div className="flex space-x-3">
-          {/* <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+          <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
             {(['7d', '30d', '90d', '1y'] as const).map((range) => (
               <button
                 key={range}
@@ -1704,9 +1774,9 @@ export default function AdminAnalyticsDashboard() {
                 {range === '7d' ? '7D' : range === '30d' ? '30D' : range === '90d' ? '90D' : '1Y'}
               </button>
             ))}
-          </div> */}
+          </div>
 
-          {/* <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+          <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
             <button
               onClick={() => setSelectedView('chart')}
               className={`p-2 rounded-md transition-colors ${
@@ -1734,11 +1804,8 @@ export default function AdminAnalyticsDashboard() {
             >
               <Grid3x3 size={16} />
             </button>
-          </div> */}
+          </div>
 
-          {hasAccess('can_generate_metrics') && (
-
-            <>
           <ActionGuard requirement="can_export_data" fallback={null}>
             <Button variant="outline" onClick={() => setIsExportModalOpen(true)}>
               <DownloadCloud size={20} className="mr-2" />
@@ -1763,8 +1830,6 @@ export default function AdminAnalyticsDashboard() {
               Trigger Repayment
             </Button>
           </ActionGuard>
-          </>
-)}
           <Button variant="outline" onClick={fetchAllData}>
             <RefreshCw size={20} className="mr-2" />
             Refresh
@@ -1803,9 +1868,8 @@ export default function AdminAnalyticsDashboard() {
           </TabsTrigger>
         </TabsList>
 
-        {/* Schedules Tab - Simplified for brevity, keep your existing implementation */}
+        {/* Schedules Tab */}
         <TabsContent value="schedules" className="space-y-6">
-          {/* Schedule Stats Cards */}
           {scheduleStats && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Card>
@@ -1949,10 +2013,8 @@ export default function AdminAnalyticsDashboard() {
                       <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">Success Rate</th>
                       <th className="text-center py-3 px-4 text-sm font-medium text-gray-600">Status</th>
                       <th className="text-center py-3 px-4 text-sm font-medium text-gray-600">Actions</th>
-                      </tr>
-                      </thead>
-                    
-                  
+                    </tr>
+                  </thead>
                   <tbody>
                     {schedules.map((schedule) => (
                       <tr key={schedule.id} className="hover:bg-gray-50">
@@ -2124,7 +2186,7 @@ export default function AdminAnalyticsDashboard() {
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-6">
           {/* KPI Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card>
               <CardContent className="pt-6">
                 <div className="flex items-center">
@@ -2147,30 +2209,13 @@ export default function AdminAnalyticsDashboard() {
             <Card>
               <CardContent className="pt-6">
                 <div className="flex items-center">
-                  <div className="rounded-full bg-orange-100 p-3 mr-4">
-                    <Target className="h-6 w-6 text-orange-600" />
+                  <div className="rounded-full bg-green-100 p-3 mr-4">
+                    <DollarSign className="h-6 w-6 text-green-600" />
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Today's Target</p>
                     <p className="text-2xl font-bold">
                       {formatCurrency(currentMonthMetrics?.monthly_target?.daily_cumulative_balance || 0)}
-                    </p>
-                    <p className="text-xs text-gray-500">Static from today's snapshot</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-                  <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center">
-                  <div className="rounded-full bg-green-100 p-3 mr-4">
-                    <DollarSign className="h-6 w-6 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Collected MTD</p>
-                    <p className="text-2xl font-bold text-green-600">
-                      {formatCurrency(currentMonthMetrics?.collected_month_to_date || 0)}
                     </p>
                     <p className="text-xs text-gray-500">Static from today's snapshot</p>
                   </div>
@@ -2185,7 +2230,7 @@ export default function AdminAnalyticsDashboard() {
                     <DollarSign className="h-6 w-6 text-green-600" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600">Assigned Balance</p>
+                    <p className="text-sm text-gray-600">Today's Assigned Balance</p>
                     <p className="text-2xl font-bold">
                       {formatCurrency(currentMonthMetrics?.assigned_cumulative_balance_uptodate || 0)}
                     </p>
@@ -2194,7 +2239,6 @@ export default function AdminAnalyticsDashboard() {
                 </div>
               </CardContent>
             </Card>
-
 
             <Card>
               <CardContent className="pt-6">
@@ -2241,7 +2285,7 @@ export default function AdminAnalyticsDashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {/* <div className="bg-blue-50 p-3 rounded-lg">
+                    <div className="bg-blue-50 p-3 rounded-lg">
                       <div className="flex items-center mb-2">
                         <Info size={14} className="text-blue-600 mr-1" />
                         <p className="text-xs text-blue-800 font-medium">Target vs Current</p>
@@ -2258,7 +2302,7 @@ export default function AdminAnalyticsDashboard() {
                           </span>
                         </div>
                       </div>
-                    </div> */}
+                    </div>
 
                     <div className="space-y-2">
                       <div className="flex justify-between text-sm">
@@ -2292,9 +2336,9 @@ export default function AdminAnalyticsDashboard() {
                         <p className="text-xs text-gray-500">{currentMonthMetrics.performance_percentage.toFixed(1)}% of expected</p>
                       </div>
                       <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-xs text-gray-500">Daily needed</p>
-                        <p className="text-lg font-semibold">{formatCurrency(currentMonthMetrics.required_daily_to_meet_target)}</p>
-                        <p className="text-xs text-gray-500">To be collected to reach target by end of month</p>
+                        <p className="text-xs text-gray-500">Remaining Target</p>
+                        <p className="text-lg font-semibold">{formatCurrency(currentMonthMetrics.remaining_target)}</p>
+                        <p className="text-xs text-gray-500">Daily needed: {formatCurrency(currentMonthMetrics.required_daily_to_meet_target)}</p>
                       </div>
                     </div>
 
@@ -2311,6 +2355,16 @@ export default function AdminAnalyticsDashboard() {
                         <p className="text-xs text-purple-600">Discounts</p>
                         <p className="font-semibold">{formatPercent(currentMonthMetrics.enhanced_metrics.discounts.percentage_of_total)}</p>
                       </div>
+                    </div>
+
+                    <div className="h-32">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={currentMonthMetrics.enhanced_metrics.daily_trend}>
+                          <Bar dataKey="collected" name="Collected" fill="#8884d8" barSize={20} />
+                          <Line type="monotone" dataKey="day_target" name="Target" stroke="#ff7300" strokeWidth={2} dot={false} />
+                          <Tooltip formatter={(value: any, name: string) => name === 'Target' ? formatCurrency(value) : formatCurrency(value)} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
                     </div>
 
                     <div className={`p-3 rounded-lg ${currentMonthMetrics.projections.on_track ? 'bg-green-50' : 'bg-red-50'}`}>
@@ -2367,7 +2421,7 @@ export default function AdminAnalyticsDashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {/* <div className="bg-blue-50 p-3 rounded-lg">
+                    <div className="bg-blue-50 p-3 rounded-lg">
                       <div className="flex items-center mb-2">
                         <Info size={14} className="text-blue-600 mr-1" />
                         <p className="text-xs text-blue-800 font-medium">Weekly Target (Static)</p>
@@ -2383,7 +2437,7 @@ export default function AdminAnalyticsDashboard() {
                         </div>
                       </div>
                       <p className="text-xs text-gray-500 mt-1">{currentWeekMetrics.weekly_target.description}</p>
-                    </div> */}
+                    </div>
 
                     <div className="space-y-2">
                       <div className="flex justify-between text-sm">
@@ -2462,7 +2516,128 @@ export default function AdminAnalyticsDashboard() {
             )}
           </div>
 
-    
+          {/* Loan Distribution Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card>
+              <CardHeader>
+                <h3 className="text-md font-semibold">Loan Status Distribution</h3>
+              </CardHeader>
+              <CardContent>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: 'Active', value: loanStats?.active_loans || 0 },
+                          { name: 'Overdue', value: dashboardData?.loans_summary?.overdue_loans || 0 },
+                          { name: 'Assigned', value: loanStats?.assigned_loans || 0 },
+                          { name: 'Unassigned', value: loanStats?.unassigned_loans || 0 }
+                        ]}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        paddingAngle={5}
+                        dataKey="value"
+                        label
+                      >
+                        {COLORS.map((color, index) => (
+                          <Cell key={`cell-${index}`} fill={color} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-4">
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500">Active Loans</p>
+                    <p className="font-semibold">{formatNumber(loanStats?.active_loans || 0)}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500">Overdue %</p>
+                    <p className="font-semibold text-red-600">
+                      {formatPercent((dashboardData?.loans_summary?.overdue_loans || 0) / (loanStats?.total_loans || 1) * 100)}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 className="text-md font-semibold">Installment Status</h3>
+              </CardHeader>
+              <CardContent>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: 'Paid Off', value: dashboardData?.installments_summary?.paid_off || 0 },
+                          { name: 'Partially Paid', value: dashboardData?.installments_summary?.partially_paid || 0 },
+                          { name: 'Overdue', value: dashboardData?.installments_summary?.overdue || 0 },
+                          { name: 'Current', value: (dashboardData?.installments_summary?.total_installments || 0) - 
+                            (dashboardData?.installments_summary?.paid_off || 0) - 
+                            (dashboardData?.installments_summary?.partially_paid || 0) - 
+                            (dashboardData?.installments_summary?.overdue || 0) }
+                        ]}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        paddingAngle={5}
+                        dataKey="value"
+                        label
+                      >
+                        {COLORS.map((color, index) => (
+                          <Cell key={`cell-${index}`} fill={color} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 className="text-md font-semibold">Collection Quality</h3>
+              </CardHeader>
+              <CardContent>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: 'Reconciled', value: currentMonthMetrics?.enhanced_metrics?.collection_quality?.reconciled_amount || 0 },
+                          { name: 'Pre-payments', value: currentMonthMetrics?.enhanced_metrics?.pre_payment?.total_received || 0 },
+                          { name: 'Regular', value: (currentMonthMetrics?.collected_month_to_date || 0) - 
+                            (currentMonthMetrics?.enhanced_metrics?.pre_payment?.total_received || 0) }
+                        ]}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        paddingAngle={5}
+                        dataKey="value"
+                        label
+                      >
+                        {COLORS.map((color, index) => (
+                          <Cell key={`cell-${index}`} fill={color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: any) => formatCurrency(value)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Cumulative Balance Trend */}
           <Card>
@@ -2525,7 +2700,7 @@ export default function AdminAnalyticsDashboard() {
             </CardContent>
           </Card>
 
-          {/* Officer Performance Section */}
+          {/* Officer Performance Section with Filters */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
@@ -2533,7 +2708,7 @@ export default function AdminAnalyticsDashboard() {
                   <Users className="mr-2 h-5 w-5 text-blue-600" />
                   Officer Performance
                 </h2>
-                <InfoHint text="Performance metrics for collection officers. Static targets from snapshots, dynamic balances from real-time data." />
+                <InfoHint text="Performance metrics for collection officers. Use filters to customize date range and officer selection." />
               </div>
               <Button 
                 variant="outline" 
@@ -2550,7 +2725,7 @@ export default function AdminAnalyticsDashboard() {
                 disabled={isOfficerLoading}
               >
                 <RefreshCw size={14} className="mr-1" />
-                Reset
+                Reset to Default
               </Button>
             </div>
             
@@ -2576,178 +2751,17 @@ export default function AdminAnalyticsDashboard() {
                 <div className="text-gray-500">Loading officer data...</div>
               </div>
             ) : filteredOfficerData && filteredOfficerData.length > 0 ? (
-              <>
-                {/* Summary Stats Row */}
-                <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
-                  <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Total Officers</p>
-                    <p className="text-xl font-bold">{filteredOfficerData.length}</p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Total Collected</p>
-                    <p className="text-xl font-bold text-green-600">
-                      {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.collected_mtd || 0), 0))}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Total Promises</p>
-                    <p className="text-xl font-bold text-yellow-600">
-                      {filteredOfficerData.reduce((sum, o) => sum + (o.metrics.promise_metrics?.promises_created_count || 0), 0)}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Total Promised Amount</p>
-                    <p className="text-xl font-bold">
-                      {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.promise_metrics?.promises_created_amount || 0), 0))}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Total Fulfilled</p>
-                    <p className="text-xl font-bold text-green-600">
-                      {filteredOfficerData.reduce((sum, o) => sum + (o.metrics.promise_metrics?.promises_fulfilled_count || 0), 0)}
-                    </p>
-                  </div>
-                   <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Total Fulfilled Amount</p>
-                    <p className="text-xl font-bold text-green-600">
-                      {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.promise_metrics?.promises_fulfilled_amount || 0), 0))}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Avg Fulfillment Rate</p>
-                    <p className="text-xl font-bold">
-                      {formatPercent(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.promise_metrics?.fulfillment_rate || 0), 0) / filteredOfficerData.length)}
-                    </p>
-                  </div>
-                  {/* <div className="bg-gray-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">Needs Attention</p>
-                    <p className="text-xl font-bold text-red-600">
-                      {filteredOfficerData.filter(o => o.metrics.needs_attention).length}
-                    </p>
-                  </div> */}
-                </div>
-                
-                {/* Main Table */}
-                <Card>
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead className="bg-gray-50">
-                          <tr className="border-b border-gray-200">
-                            <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Officer</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Monthly Target</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Collected MTD</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Monthly Rate</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Monthly Balance</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Promises Count</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Promises Amount</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Fulfilled</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Fulfillment Rate</th>
-                            <th className="text-center py-3 px-4 text-sm font-semibold text-gray-700">Status</th>
-                            <th className="text-center py-3 px-4 text-sm font-semibold text-gray-700">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredOfficerData.map((officer) => (
-                            <tr key={officer.officer.id} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-3 px-4">
-                                <div className="flex items-center">
-                                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
-                                    <span className="text-sm font-medium text-blue-600">
-                                      {officer.officer.username.charAt(0).toUpperCase()}
-                                    </span>
-                                  </div>
-                                  <div>
-                                    <p className="font-medium text-gray-900">
-                                      {officer.officer.full_name || officer.officer.username}
-                                    </p>
-                                    <p className="text-xs text-gray-500">{officer.officer.email}</p>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="text-right py-3 px-4 font-medium">
-                                {formatCurrency(officer.metrics.monthly_target)}
-                              </td>
-                              <td className="text-right py-3 px-4 text-green-600 font-medium">
-                                {formatCurrency(officer.metrics.collected_mtd)}
-                              </td>
-                              <td className="text-right py-3 px-4">
-                                <span className={`px-2 py-1 text-xs rounded-full ${
-                                  officer.metrics.collection_rate_vs_monthly_target >= 70 ? 'bg-green-100 text-green-800' :
-                                  officer.metrics.collection_rate_vs_monthly_target >= 40 ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {formatPercent(officer.metrics.collection_rate_vs_monthly_target)}
-                                </span>
-                              </td>
-                              <td className="text-right py-3 px-4 text-orange-600">
-                                {formatCurrency(officer.metrics.monthly_current_balance)}
-                              </td>
-                              <td className="text-right py-3 px-4">
-                                <span className="font-medium">
-                                  {officer.metrics.promise_metrics?.promises_created_count || 0}
-                                </span>
-                              </td>
-                              <td className="text-right py-3 px-4">
-                                {formatCurrency(officer.metrics.promise_metrics?.promises_created_amount || 0)}
-                              </td>
-                              <td className="text-right py-3 px-4">
-                                <span className="font-medium text-green-600">
-                                  {officer.metrics.promise_metrics?.promises_fulfilled_count || 0}
-                                </span>
-                                <span className="text-xs text-gray-400 ml-1">
-                                  / {formatCurrency(officer.metrics.promise_metrics?.promises_fulfilled_amount || 0)}
-                                </span>
-                              </td>
-                              <td className="text-right py-3 px-4">
-                                <span className={`px-2 py-1 text-xs rounded-full ${
-                                  (officer.metrics.promise_metrics?.fulfillment_rate || 0) >= 70 ? 'bg-green-100 text-green-800' :
-                                  (officer.metrics.promise_metrics?.fulfillment_rate || 0) >= 40 ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {formatPercent(officer.metrics.promise_metrics?.fulfillment_rate || 0)}
-                                </span>
-                              </td>
-                              <td className="text-center py-3 px-4">
-                                <span className={`px-2 py-1 text-xs rounded-full ${
-                                  officer.metrics.status === 'exceeding' ? 'bg-green-100 text-green-800' :
-                                  officer.metrics.status === 'on_track' ? 'bg-blue-100 text-blue-800' :
-                                  officer.metrics.status === 'behind' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {officer.metrics.status.toUpperCase()}
-                                </span>
-                                {officer.metrics.needs_attention && (
-                                  <span className="ml-1 text-xs text-red-500" title="Needs Attention">⚠</span>
-                                )}
-                              </td>
-                              <td className="text-center py-3 px-4">
-                                <div className="flex justify-center space-x-2">
-                                  <button
-                                    onClick={() => {
-                                      setSelectedOfficerDetail(officer);
-                                      setIsOfficerDetailModalOpen(true);
-                                    }}
-                                    className="p-1 hover:bg-gray-100 rounded text-blue-600"
-                                    title="View Details"
-                                  >
-                                    <Eye size={16} />
-                                  </button>
-                                  <Link href={`/analytics/officer/${officer.officer.id}`}>
-                                    <button className="p-1 hover:bg-gray-100 rounded text-green-600" title="Full Analytics">
-                                      <TrendingUp size={16} />
-                                    </button>
-                                  </Link>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
+              <div className="grid grid-cols-1 gap-4">
+                {filteredOfficerData.map((officer, index) => (
+                  <OfficerStatsCard 
+                    key={officer.officer.id || index} 
+                    officer={officer}
+                    formatCurrency={formatCurrency}
+                    formatPercent={formatPercent}
+                    getStatusBadgeClass={getStatusBadgeClass}
+                  />
+                ))}
+              </div>
             ) : (
               <div className="text-center py-12 bg-gray-50 rounded-lg">
                 <Users size={48} className="mx-auto text-gray-400 mb-2" />
@@ -2755,11 +2769,43 @@ export default function AdminAnalyticsDashboard() {
                 <p className="text-sm text-gray-400 mt-1">Try adjusting your filters or generating metrics first.</p>
               </div>
             )}
+            
+            {filteredOfficerData && filteredOfficerData.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
+                <div className="bg-gray-50 p-3 rounded-lg text-center">
+                  <p className="text-xs text-gray-500">Total Officers</p>
+                  <p className="text-xl font-bold">{filteredOfficerData.length}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg text-center">
+                  <p className="text-xs text-gray-500">Total Collected</p>
+                  <p className="text-xl font-bold text-green-600">
+                    {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + o.metrics.collected_during_period, 0))}
+                  </p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg text-center">
+                  <p className="text-xs text-gray-500">Avg Collection Rate</p>
+                  <p className="text-xl font-bold">
+                    {formatPercent(filteredOfficerData.reduce((sum, o) => sum + o.metrics.collection_rate_vs_daily_target, 0) / filteredOfficerData.length)}
+                  </p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg text-center">
+                  <p className="text-xs text-gray-500">Total Calls</p>
+                  <p className="text-xl font-bold">
+                    {filteredOfficerData.reduce((sum, o) => sum + o.metrics.calls_made_during_period, 0)}
+                  </p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg text-center">
+                  <p className="text-xs text-gray-500">Avg Call Success</p>
+                  <p className="text-xl font-bold">
+                    {formatPercent(filteredOfficerData.reduce((sum, o) => sum + o.metrics.call_success_rate, 0) / filteredOfficerData.length)}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </TabsContent>
 
-
-       {/* Performance Tab */}
+        {/* Performance Tab */}
         <TabsContent value="performance" className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
@@ -3515,672 +3561,658 @@ export default function AdminAnalyticsDashboard() {
         </TabsContent>
       </Tabs>
 
-      {/* Modals */}
-      {/* Officer Detail Modal */}
-      <OfficerDetailModal
-        officer={selectedOfficerDetail}
-        isOpen={isOfficerDetailModalOpen}
-        onClose={() => {
-          setIsOfficerDetailModalOpen(false);
-          setSelectedOfficerDetail(null);
-        }}
-        formatCurrency={formatCurrency}
-        formatPercent={formatPercent}
-        formatNumber={formatNumber}
-      />
+      {/* ============================================================================
+          MODALS
+          ============================================================================ */}
 
-        {/* ============================================================================
-              MODALS
-              ============================================================================ */}
-    
-          {/* Schedule Modal (Create/Edit) */}
-          <Modal
-            isOpen={isScheduleModalOpen}
-            onClose={() => {
-              setIsScheduleModalOpen(false);
-              resetScheduleForm();
-            }}
-            title={selectedSchedule ? 'Edit Schedule' : 'Create New Schedule'}
-            size="lg"
-          >
-            <div className="space-y-4 max-h-[70vh] overflow-y-auto p-1">
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  Configure job schedule parameters. All times are in 24-hour format.
-                </p>
+      {/* Schedule Modal (Create/Edit) */}
+      <Modal
+        isOpen={isScheduleModalOpen}
+        onClose={() => {
+          setIsScheduleModalOpen(false);
+          resetScheduleForm();
+        }}
+        title={selectedSchedule ? 'Edit Schedule' : 'Create New Schedule'}
+        size="lg"
+      >
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto p-1">
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <p className="text-sm text-blue-800">
+              Configure job schedule parameters. All times are in 24-hour format.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+              <input
+                type="text"
+                value={scheduleFormData.name}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, name: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                placeholder="e.g., Weekday Loan Processing"
+                required
+              />
+            </div>
+
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={scheduleFormData.description}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, description: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                rows={2}
+                placeholder="Optional description"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Frequency *</label>
+              <select
+                value={scheduleFormData.frequency}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, frequency: e.target.value as any }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              >
+                {frequencyOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {frequencyOptions.find(f => f.value === scheduleFormData.frequency)?.description}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Interval (hours)</label>
+              <input
+                type="number"
+                value={scheduleFormData.interval_hours}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, interval_hours: parseInt(e.target.value) }))}
+                min="1"
+                max="24"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Hour (0-23)</label>
+              <input
+                type="number"
+                value={scheduleFormData.start_hour}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, start_hour: parseInt(e.target.value) }))}
+                min="0"
+                max="23"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">End Hour (0-23)</label>
+              <input
+                type="number"
+                value={scheduleFormData.end_hour}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, end_hour: parseInt(e.target.value) }))}
+                min="0"
+                max="23"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Days of Week</label>
+              <input
+                type="text"
+                value={scheduleFormData.days_of_week}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, days_of_week: e.target.value }))}
+                placeholder="1,2,3,4,5 (1=Monday)"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+              <p className="text-xs text-gray-500 mt-1">Comma-separated (1=Monday, 7=Sunday)</p>
+            </div>
+
+            {scheduleFormData.frequency === 'monthly' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Days of Month</label>
+                <input
+                  type="text"
+                  value={scheduleFormData.days_of_month || ''}
+                  onChange={(e) => setScheduleFormData(prev => ({ ...prev, days_of_month: e.target.value }))}
+                  placeholder="1,15,30"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
               </div>
-    
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                  <input
-                    type="text"
-                    value={scheduleFormData.name}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    placeholder="e.g., Weekday Loan Processing"
-                    required
-                  />
-                </div>
-    
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                  <textarea
-                    value={scheduleFormData.description}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, description: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    rows={2}
-                    placeholder="Optional description"
-                  />
-                </div>
-    
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Frequency *</label>
-                  <select
-                    value={scheduleFormData.frequency}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, frequency: e.target.value as any }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  >
-                    {frequencyOptions.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {frequencyOptions.find(f => f.value === scheduleFormData.frequency)?.description}
-                  </p>
-                </div>
-    
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Interval (hours)</label>
-                  <input
-                    type="number"
-                    value={scheduleFormData.interval_hours}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, interval_hours: parseInt(e.target.value) }))}
-                    min="1"
-                    max="24"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                </div>
-    
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Start Hour (0-23)</label>
-                  <input
-                    type="number"
-                    value={scheduleFormData.start_hour}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, start_hour: parseInt(e.target.value) }))}
-                    min="0"
-                    max="23"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                </div>
-    
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">End Hour (0-23)</label>
-                  <input
-                    type="number"
-                    value={scheduleFormData.end_hour}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, end_hour: parseInt(e.target.value) }))}
-                    min="0"
-                    max="23"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                </div>
-    
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Days of Week</label>
-                  <input
-                    type="text"
-                    value={scheduleFormData.days_of_week}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, days_of_week: e.target.value }))}
-                    placeholder="1,2,3,4,5 (1=Monday)"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Comma-separated (1=Monday, 7=Sunday)</p>
-                </div>
-    
-                {scheduleFormData.frequency === 'monthly' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Days of Month</label>
-                    <input
-                      type="text"
-                      value={scheduleFormData.days_of_month || ''}
-                      onChange={(e) => setScheduleFormData(prev => ({ ...prev, days_of_month: e.target.value }))}
-                      placeholder="1,15,30"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                )}
-    
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Page Size</label>
-                  <input
-                    type="number"
-                    value={scheduleFormData.page_size}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, page_size: parseInt(e.target.value) }))}
-                    min="10"
-                    max="1000"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                </div>
-    
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Max Retries</label>
-                  <input
-                    type="number"
-                    value={scheduleFormData.max_retries}
-                    onChange={(e) => setScheduleFormData(prev => ({ ...prev, max_retries: parseInt(e.target.value) }))}
-                    min="1"
-                    max="10"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                </div>
-    
-                <div className="col-span-2">
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={scheduleFormData.is_active}
-                      onChange={(e) => setScheduleFormData(prev => ({ ...prev, is_active: e.target.checked }))}
-                      className="rounded border-gray-300"
-                    />
-                    <span className="text-sm font-medium text-gray-700">Active</span>
-                  </label>
-                </div>
-    
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Filter Parameters (JSON)</label>
-                  <textarea
-                    value={JSON.stringify(scheduleFormData.filter_params, null, 2)}
-                    onChange={(e) => {
-                      try {
-                        const parsed = JSON.parse(e.target.value);
-                        setScheduleFormData(prev => ({ ...prev, filter_params: parsed }));
-                      } catch {
-                        // Invalid JSON - ignore
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
-                    rows={4}
-                    placeholder="{}"
-                  />
-                </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Page Size</label>
+              <input
+                type="number"
+                value={scheduleFormData.page_size}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, page_size: parseInt(e.target.value) }))}
+                min="10"
+                max="1000"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Max Retries</label>
+              <input
+                type="number"
+                value={scheduleFormData.max_retries}
+                onChange={(e) => setScheduleFormData(prev => ({ ...prev, max_retries: parseInt(e.target.value) }))}
+                min="1"
+                max="10"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+            </div>
+
+            <div className="col-span-2">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={scheduleFormData.is_active}
+                  onChange={(e) => setScheduleFormData(prev => ({ ...prev, is_active: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm font-medium text-gray-700">Active</span>
+              </label>
+            </div>
+
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Filter Parameters (JSON)</label>
+              <textarea
+                value={JSON.stringify(scheduleFormData.filter_params, null, 2)}
+                onChange={(e) => {
+                  try {
+                    const parsed = JSON.parse(e.target.value);
+                    setScheduleFormData(prev => ({ ...prev, filter_params: parsed }));
+                  } catch {
+                    // Invalid JSON - ignore
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
+                rows={4}
+                placeholder="{}"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4 border-t">
+            <Button variant="outline" onClick={() => { setIsScheduleModalOpen(false); resetScheduleForm(); }} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button onClick={selectedSchedule ? handleUpdateSchedule : handleCreateSchedule} disabled={isSubmitting || !scheduleFormData.name} className="bg-blue-600 hover:bg-blue-700">
+              {isSubmitting ? 'Saving...' : (selectedSchedule ? 'Update' : 'Create')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Schedule Detail Modal */}
+      <Modal
+        isOpen={isScheduleDetailModalOpen}
+        onClose={() => { setIsScheduleDetailModalOpen(false); setSelectedSchedule(null); }}
+        title="Schedule Details"
+        size="lg"
+      >
+        {selectedSchedule && (
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-xl font-bold">{selectedSchedule.name}</h3>
+                {selectedSchedule.description && <p className="text-gray-600 mt-1">{selectedSchedule.description}</p>}
               </div>
-    
-              <div className="flex justify-end space-x-3 pt-4 border-t">
-                <Button variant="outline" onClick={() => { setIsScheduleModalOpen(false); resetScheduleForm(); }} disabled={isSubmitting}>
-                  Cancel
-                </Button>
-                <Button onClick={selectedSchedule ? handleUpdateSchedule : handleCreateSchedule} disabled={isSubmitting || !scheduleFormData.name} className="bg-blue-600 hover:bg-blue-700">
-                  {isSubmitting ? 'Saving...' : (selectedSchedule ? 'Update' : 'Create')}
-                </Button>
+              <span className={`px-3 py-1 text-sm rounded-full ${selectedSchedule.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                {selectedSchedule.is_active ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <p className="text-xs text-blue-600">Total Runs</p>
+                <p className="text-2xl font-bold text-blue-700">{selectedSchedule?.metrics?.total_executions ?? 0}</p>
+              </div>
+              <div className="bg-green-50 p-3 rounded-lg">
+                <p className="text-xs text-green-600">Success Rate</p>
+                <p className="text-2xl font-bold text-green-700">{formatPercent(selectedSchedule?.metrics?.success_rate ?? 0)}</p>
+              </div>
+              <div className="bg-purple-50 p-3 rounded-lg">
+                <p className="text-xs text-purple-600">Avg Duration</p>
+                <p className="text-2xl font-bold text-purple-700">{formatDuration(selectedSchedule?.metrics?.avg_duration_seconds || 0)}</p>
               </div>
             </div>
-          </Modal>
-    
-          {/* Schedule Detail Modal */}
-          <Modal
-            isOpen={isScheduleDetailModalOpen}
-            onClose={() => { setIsScheduleDetailModalOpen(false); setSelectedSchedule(null); }}
-            title="Schedule Details"
-            size="lg"
-          >
-            {selectedSchedule && (
-              <div className="space-y-4 max-h-[70vh] overflow-y-auto">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-xl font-bold">{selectedSchedule.name}</h3>
-                    {selectedSchedule.description && <p className="text-gray-600 mt-1">{selectedSchedule.description}</p>}
-                  </div>
-                  <span className={`px-3 py-1 text-sm rounded-full ${selectedSchedule.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-                    {selectedSchedule.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-    
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="bg-blue-50 p-3 rounded-lg">
-                    <p className="text-xs text-blue-600">Total Runs</p>
-                    <p className="text-2xl font-bold text-blue-700">{selectedSchedule?.metrics?.total_executions ?? 0}</p>
-                  </div>
-                  <div className="bg-green-50 p-3 rounded-lg">
-                    <p className="text-xs text-green-600">Success Rate</p>
-                    <p className="text-2xl font-bold text-green-700">{formatPercent(selectedSchedule?.metrics?.success_rate ?? 0)}</p>
-                  </div>
-                  <div className="bg-purple-50 p-3 rounded-lg">
-                    <p className="text-xs text-purple-600">Avg Duration</p>
-                    <p className="text-2xl font-bold text-purple-700">{formatDuration(selectedSchedule?.metrics?.avg_duration_seconds || 0)}</p>
-                  </div>
-                </div>
-    
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-500">Frequency</p>
-                    <p className="font-medium">{frequencyOptions.find(f => f.value === selectedSchedule.frequency)?.label || selectedSchedule.frequency}</p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-500">Time Window</p>
-                    <p className="font-medium">{selectedSchedule.start_hour}:00 - {selectedSchedule.end_hour}:00</p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-500">Interval</p>
-                    <p className="font-medium">Every {selectedSchedule.interval_hours} hours</p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-500">Days</p>
-                    <p className="font-medium">
-                      {selectedSchedule.days_of_week.split(',').map(d => {
-                        const day = dayOptions.find(opt => opt.value === parseInt(d));
-                        return day?.label.slice(0, 3);
-                      }).join(', ')}
-                    </p>
-                  </div>
-                </div>
-    
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Last Run</p>
-                    <p className="font-medium">{selectedSchedule.last_run_display || 'Never'}</p>
-                    {selectedSchedule.last_run && <p className="text-xs text-gray-500">{formatDateTime(selectedSchedule.last_run)}</p>}
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Next Run</p>
-                    <p className="font-medium">{selectedSchedule.next_run_display || 'Not scheduled'}</p>
-                    {selectedSchedule.next_run && <p className="text-xs text-gray-500">{formatDateTime(selectedSchedule.next_run)}</p>}
-                  </div>
-                </div>
-    
-                {Object.keys(selectedSchedule.filter_params || {}).length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-700 mb-1">Filter Parameters</p>
-                    <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-32">
-                      {JSON.stringify(selectedSchedule.filter_params, null, 2)}
-                    </pre>
-                  </div>
-                )}
-    
-                <div>
-                  <p className="text-sm font-medium text-gray-700 mb-2">Recent Executions</p>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {selectedSchedule.recent_executions?.results?.map((exec) => (
-                      <div key={exec.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                        <div>
-                          <p className="text-sm">{formatDateTime(exec.scheduled_time)}</p>
-                          <p className="text-xs text-gray-500">{exec.total_loans_processed} loans · {exec.duration_formatted}</p>
-                        </div>
-                        <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(exec.status)}`}>{exec.status}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {selectedSchedule.recent_executions?.total_pages > 1 && (
-                    <div className="mt-2 text-xs text-gray-500">
-                      Showing page {selectedSchedule.recent_executions.page} of {selectedSchedule.recent_executions.total_pages}
-                    </div>
-                  )}
-                </div>
-    
-                <div className="text-xs text-gray-500 border-t pt-4">
-                  <p>Created by: {selectedSchedule.created_by_details?.username || 'Unknown'}</p>
-                  <p>Created: {formatDateTime(selectedSchedule.created_at)}</p>
-                  <p>Last updated: {formatDateTime(selectedSchedule.updated_at)}</p>
-                </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-xs text-gray-500">Frequency</p>
+                <p className="font-medium">{frequencyOptions.find(f => f.value === selectedSchedule.frequency)?.label || selectedSchedule.frequency}</p>
               </div>
-            )}
-          </Modal>
-    
-          {/* Delete Confirmation Modal */}
-          <Modal
-            isOpen={isDeleteScheduleModalOpen}
-            onClose={() => setIsDeleteScheduleModalOpen(false)}
-            title="Delete Schedule"
-            size="sm"
-          >
-            {selectedSchedule && (
-              <div className="space-y-4">
-                <p className="text-gray-600">
-                  Are you sure you want to delete schedule <span className="font-bold">"{selectedSchedule.name}"</span>?
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-xs text-gray-500">Time Window</p>
+                <p className="font-medium">{selectedSchedule.start_hour}:00 - {selectedSchedule.end_hour}:00</p>
+              </div>
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-xs text-gray-500">Interval</p>
+                <p className="font-medium">Every {selectedSchedule.interval_hours} hours</p>
+              </div>
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-xs text-gray-500">Days</p>
+                <p className="font-medium">
+                  {selectedSchedule.days_of_week.split(',').map(d => {
+                    const day = dayOptions.find(opt => opt.value === parseInt(d));
+                    return day?.label.slice(0, 3);
+                  }).join(', ')}
                 </p>
-                <p className="text-sm text-red-600">This action cannot be undone. All execution history will be preserved but the schedule will be removed.</p>
-                <div className="flex justify-end space-x-3">
-                  <Button variant="outline" onClick={() => setIsDeleteScheduleModalOpen(false)} disabled={isSubmitting}>Cancel</Button>
-                  <Button onClick={handleDeleteSchedule} disabled={isSubmitting} className="bg-red-600 hover:bg-red-700">
-                    {isSubmitting ? 'Deleting...' : 'Delete Schedule'}
-                  </Button>
-                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-gray-600">Last Run</p>
+                <p className="font-medium">{selectedSchedule.last_run_display || 'Never'}</p>
+                {selectedSchedule.last_run && <p className="text-xs text-gray-500">{formatDateTime(selectedSchedule.last_run)}</p>}
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Next Run</p>
+                <p className="font-medium">{selectedSchedule.next_run_display || 'Not scheduled'}</p>
+                {selectedSchedule.next_run && <p className="text-xs text-gray-500">{formatDateTime(selectedSchedule.next_run)}</p>}
+              </div>
+            </div>
+
+            {Object.keys(selectedSchedule.filter_params || {}).length > 0 && (
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-1">Filter Parameters</p>
+                <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-32">
+                  {JSON.stringify(selectedSchedule.filter_params, null, 2)}
+                </pre>
               </div>
             )}
-          </Modal>
-    
-          {/* Trigger Job Modal */}
-          <Modal
-            isOpen={isTriggerJobModalOpen}
-            onClose={() => { setIsTriggerJobModalOpen(false); resetTriggerForm(); }}
-            title="Trigger Loan Processing Job"
-            size="lg"
-            isLoading={isSubmitting}
-          >
-            <div className="space-y-4">
-              <div className="bg-yellow-50 p-4 rounded-lg">
-                <div className="flex items-center">
-                  <Shield className="h-5 w-5 text-yellow-600 mr-2" />
-                  <p className="text-sm text-yellow-800">This will trigger a manual loan processing job. All filters are optional.</p>
-                </div>
-              </div>
-    
-              {cooldownStatus?.is_active && (
-                <div className="bg-orange-50 p-3 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <Clock className="h-4 w-4 text-orange-600 mr-2" />
-                      <span className="text-sm text-orange-800">Cooldown active: {cooldownStatus.minutes_remaining} minutes remaining</span>
+
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Recent Executions</p>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {selectedSchedule.recent_executions?.results?.map((exec) => (
+                  <div key={exec.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                    <div>
+                      <p className="text-sm">{formatDateTime(exec.scheduled_time)}</p>
+                      <p className="text-xs text-gray-500">{exec.total_loans_processed} loans · {exec.duration_formatted}</p>
                     </div>
-                    {cooldownStatus.can_bypass && (
-                      <label className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          checked={triggerFormData.skip_cooldown}
-                          onChange={(e) => setTriggerFormData(prev => ({ ...prev, skip_cooldown: e.target.checked }))}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="text-sm text-orange-700">Bypass cooldown</span>
-                      </label>
-                    )}
+                    <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(exec.status)}`}>{exec.status}</span>
                   </div>
+                ))}
+              </div>
+              {selectedSchedule.recent_executions?.total_pages > 1 && (
+                <div className="mt-2 text-xs text-gray-500">
+                  Showing page {selectedSchedule.recent_executions.page} of {selectedSchedule.recent_executions.total_pages}
                 </div>
               )}
-    
-              <div className="grid grid-cols-2 gap-4">
-                <div>
+            </div>
+
+            <div className="text-xs text-gray-500 border-t pt-4">
+              <p>Created by: {selectedSchedule.created_by_details?.username || 'Unknown'}</p>
+              <p>Created: {formatDateTime(selectedSchedule.created_at)}</p>
+              <p>Last updated: {formatDateTime(selectedSchedule.updated_at)}</p>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={isDeleteScheduleModalOpen}
+        onClose={() => setIsDeleteScheduleModalOpen(false)}
+        title="Delete Schedule"
+        size="sm"
+      >
+        {selectedSchedule && (
+          <div className="space-y-4">
+            <p className="text-gray-600">
+              Are you sure you want to delete schedule <span className="font-bold">"{selectedSchedule.name}"</span>?
+            </p>
+            <p className="text-sm text-red-600">This action cannot be undone. All execution history will be preserved but the schedule will be removed.</p>
+            <div className="flex justify-end space-x-3">
+              <Button variant="outline" onClick={() => setIsDeleteScheduleModalOpen(false)} disabled={isSubmitting}>Cancel</Button>
+              <Button onClick={handleDeleteSchedule} disabled={isSubmitting} className="bg-red-600 hover:bg-red-700">
+                {isSubmitting ? 'Deleting...' : 'Delete Schedule'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Trigger Job Modal */}
+      <Modal
+        isOpen={isTriggerJobModalOpen}
+        onClose={() => { setIsTriggerJobModalOpen(false); resetTriggerForm(); }}
+        title="Trigger Loan Processing Job"
+        size="lg"
+        isLoading={isSubmitting}
+      >
+        <div className="space-y-4">
+          <div className="bg-yellow-50 p-4 rounded-lg">
+            <div className="flex items-center">
+              <Shield className="h-5 w-5 text-yellow-600 mr-2" />
+              <p className="text-sm text-yellow-800">This will trigger a manual loan processing job. All filters are optional.</p>
+            </div>
+          </div>
+
+          {cooldownStatus?.is_active && (
+            <div className="bg-orange-50 p-3 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <Clock className="h-4 w-4 text-orange-600 mr-2" />
+                  <span className="text-sm text-orange-800">Cooldown active: {cooldownStatus.minutes_remaining} minutes remaining</span>
+                </div>
+                {cooldownStatus.can_bypass && (
                   <label className="flex items-center space-x-2">
                     <input
                       type="checkbox"
-                      checked={triggerFormData.force}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, force: e.target.checked }))}
+                      checked={triggerFormData.skip_cooldown}
+                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, skip_cooldown: e.target.checked }))}
                       className="rounded border-gray-300"
                     />
-                    <span className="text-sm font-medium text-gray-700">Force (Bypass Schedule)</span>
+                    <span className="text-sm text-orange-700">Bypass cooldown</span>
                   </label>
-                  <p className="text-xs text-gray-500 ml-6">Run regardless of schedule window</p>
-                </div>
-                {canSkipCooldown && (
-                  <div>
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={triggerFormData.skip_cooldown}
-                        onChange={(e) => setTriggerFormData(prev => ({ ...prev, skip_cooldown: e.target.checked }))}
-                        className="rounded border-gray-300"
-                      />
-                      <span className="text-sm font-medium text-gray-700">Skip Cooldown</span>
-                    </label>
-                    <p className="text-xs text-gray-500 ml-6">Bypass 10-minute cooldown (admin only)</p>
-                  </div>
                 )}
-              </div>
-    
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Page Size</label>
-                  <input
-                    type="number"
-                    value={triggerFormData.page_size}
-                    onChange={(e) => setTriggerFormData(prev => ({ ...prev, page_size: parseInt(e.target.value) }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    min="10"
-                    max="1000"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Max Retries</label>
-                  <input
-                    type="number"
-                    value={triggerFormData.max_retries}
-                    onChange={(e) => setTriggerFormData(prev => ({ ...prev, max_retries: parseInt(e.target.value) }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    min="1"
-                    max="10"
-                  />
-                </div>
-              </div>
-    
-              <div className="border-t border-gray-200 pt-4">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">Optional Filters</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name</label>
-                    <input
-                      type="text"
-                      value={triggerFormData.name}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="e.g., John Doe"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Registration Number</label>
-                    <input
-                      type="text"
-                      value={triggerFormData.registration_number}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, registration_number: e.target.value }))}
-                      placeholder="e.g., KCA123A"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Identity Number</label>
-                    <input
-                      type="text"
-                      value={triggerFormData.identity_num}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, identity_num: e.target.value }))}
-                      placeholder="e.g., 12345678"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Loan Statuses</label>
-                    <input
-                      type="text"
-                      value={triggerFormData.loan_statuses}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, loan_statuses: e.target.value }))}
-                      placeholder="e.g., 1002,1003"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Repeat Client</label>
-                    <input
-                      type="number"
-                      value={triggerFormData.repeat_client}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, repeat_client: e.target.value }))}
-                      placeholder="0 or 1"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                      min="0"
-                      max="1"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Loan Type</label>
-                    <input
-                      type="number"
-                      value={triggerFormData.loan_type}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, loan_type: e.target.value }))}
-                      placeholder="e.g., 0"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Office ID</label>
-                    <input
-                      type="text"
-                      value={triggerFormData.office_id}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, office_id: e.target.value }))}
-                      placeholder="e.g., 0b8048171e800000"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                </div>
-    
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Apply Time Begin</label>
-                    <input
-                      type="datetime-local"
-                      value={triggerFormData.apply_time_begin}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, apply_time_begin: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Apply Time End</label>
-                    <input
-                      type="datetime-local"
-                      value={triggerFormData.apply_time_end}
-                      onChange={(e) => setTriggerFormData(prev => ({ ...prev, apply_time_end: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                </div>
-              </div>
-    
-              <div className="flex justify-end space-x-3 pt-4">
-                <Button variant="outline" onClick={() => setIsTriggerJobModalOpen(false)} disabled={isSubmitting}>Cancel</Button>
-                <Button onClick={handleTriggerJob} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700">
-                  {isSubmitting ? 'Triggering...' : 'Trigger Job'}
-                </Button>
               </div>
             </div>
-          </Modal>
-    
-          {/* Export Modal */}
-          <Modal
-            isOpen={isExportModalOpen}
-            onClose={() => setIsExportModalOpen(false)}
-            title="Export Analytics Data"
-            size="sm"
-          >
-            <div className="space-y-4">
-              <p className="text-sm text-gray-600">Choose export format and options</p>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Format</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    onClick={() => setExportFormat('csv')}
-                    className={`p-3 border rounded-lg text-center ${exportFormat === 'csv' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
-                  >
-                    <FileText size={24} className="mx-auto mb-1 text-gray-600" />
-                    <span className="text-xs">CSV</span>
-                  </button>
-                  <button
-                    onClick={() => setExportFormat('excel')}
-                    className={`p-3 border rounded-lg text-center ${exportFormat === 'excel' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
-                  >
-                    <FileSpreadsheet size={24} className="mx-auto mb-1 text-green-600" />
-                    <span className="text-xs">Excel</span>
-                  </button>
-                  <button
-                    onClick={() => setExportFormat('pdf')}
-                    className={`p-3 border rounded-lg text-center ${exportFormat === 'pdf' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
-                  >
-                    <FileBarChart size={24} className="mx-auto mb-1 text-red-600" />
-                    <span className="text-xs">PDF</span>
-                  </button>
-                </div>
-              </div>
-    
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Period</label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-md" value={selectedTimeRange} onChange={(e) => setSelectedTimeRange(e.target.value as any)}>
-                  <option value="7d">Last 7 Days</option>
-                  <option value="30d">Last 30 Days</option>
-                  <option value="90d">Last 90 Days</option>
-                  <option value="1y">Last Year</option>
-                </select>
-              </div>
-    
-              <div className="flex justify-end space-x-3 pt-4">
-                <Button variant="outline" onClick={() => setIsExportModalOpen(false)}>Cancel</Button>
-                <Button onClick={handleExportData} className="bg-blue-600 hover:bg-blue-700">
-                  <DownloadCloud size={16} className="mr-2" />
-                  Export
-                </Button>
-              </div>
-            </div>
-          </Modal>
-    
-          {/* Job Details Modal */}
-          {selectedJob && (
-            <Modal
-              isOpen={isJobDetailsModalOpen}
-              onClose={() => { setIsJobDetailsModalOpen(false); setSelectedJob(null); }}
-              title="Job Details"
-              size="md"
-            >
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className={`px-2 py-1 text-sm rounded-full ${getStatusColor(selectedJob?.status)}`}>{selectedJob?.status}</span>
-                  <span className="text-xs text-gray-500">Job ID: {selectedJob?.id}</span>
-                </div>
-    
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-500">Started At</p>
-                    <p className="font-medium">{formatDateTime(selectedJob?.started_at)}</p>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-500">Completed At</p>
-                    <p className="font-medium">{selectedJob?.completed_at ? formatDateTime(selectedJob?.completed_at) : 'N/A'}</p>
-                  </div>
-                </div>
-    
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Duration</p>
-                    <p className="text-lg font-semibold">{selectedJob?.duration_seconds ? formatDuration(selectedJob?.duration_seconds) : 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Progress</p>
-                    <p className="text-lg font-semibold">{selectedJob?.progress_percentage?.toFixed(1)}%</p>
-                  </div>
-                </div>
-    
-                <div>
-                  <p className="text-sm font-medium text-gray-700 mb-2">Loan Processing Stats</p>
-                  <div className="grid grid-cols-3 gap-4 text-center">
-                    <div className="bg-gray-50 p-2 rounded"><p className="text-xs text-gray-500">Total</p><p className="font-medium">{selectedJob?.total_loans}</p></div>
-                    <div className="bg-gray-50 p-2 rounded"><p className="text-xs text-gray-500">Processed</p><p className="font-medium">{selectedJob?.processed_loans}</p></div>
-                    <div className="bg-gray-50 p-2 rounded"><p className="text-xs text-gray-500">Success</p><p className="font-medium text-green-600">{selectedJob?.successful_fetches}</p></div>
-                  </div>
-                </div>
-    
-                <div>
-                  <p className="text-sm font-medium text-gray-700 mb-2">Updates</p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div><p className="text-xs text-gray-500">Main Loans</p><p className="font-medium">Created: {selectedJob?.main_loans_created}</p><p className="font-medium">Updated: {selectedJob?.main_loans_updated}</p></div>
-                    <div><p className="text-xs text-gray-500">Installments</p><p className="font-medium">Created: {selectedJob?.installments_created}</p><p className="font-medium">Updated: {selectedJob?.installments_updated}</p></div>
-                  </div>
-                </div>
-    
-                {selectedJob?.filter_params && selectedJob?.filter_params !== '{}' && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-700 mb-1">Applied Filters</p>
-                    <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-32">
-                      {JSON.stringify(JSON.parse(selectedJob?.filter_params?.replace(/'/g, '"')), null, 2)}
-                    </pre>
-                  </div>
-                )}
-    
-                {selectedJob?.error_message && (
-                  <div className="p-3 bg-red-50 rounded-lg">
-                    <p className="text-sm font-medium text-red-800 mb-1">Error Message</p>
-                    <p className="text-xs text-red-700">{selectedJob?.error_message}</p>
-                  </div>
-                )}
-    
-                <div className="flex justify-end pt-4">
-                  <Button variant="outline" onClick={() => setIsJobDetailsModalOpen(false)}>Close</Button>
-                </div>
-              </div>
-            </Modal>
           )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={triggerFormData.force}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, force: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm font-medium text-gray-700">Force (Bypass Schedule)</span>
+              </label>
+              <p className="text-xs text-gray-500 ml-6">Run regardless of schedule window</p>
+            </div>
+            {canSkipCooldown && (
+              <div>
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={triggerFormData.skip_cooldown}
+                    onChange={(e) => setTriggerFormData(prev => ({ ...prev, skip_cooldown: e.target.checked }))}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Skip Cooldown</span>
+                </label>
+                <p className="text-xs text-gray-500 ml-6">Bypass 10-minute cooldown (admin only)</p>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Page Size</label>
+              <input
+                type="number"
+                value={triggerFormData.page_size}
+                onChange={(e) => setTriggerFormData(prev => ({ ...prev, page_size: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                min="10"
+                max="1000"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Max Retries</label>
+              <input
+                type="number"
+                value={triggerFormData.max_retries}
+                onChange={(e) => setTriggerFormData(prev => ({ ...prev, max_retries: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                min="1"
+                max="10"
+              />
+            </div>
+          </div>
+
+          <div className="border-t border-gray-200 pt-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-3">Optional Filters</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name</label>
+                <input
+                  type="text"
+                  value={triggerFormData.name}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="e.g., John Doe"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Registration Number</label>
+                <input
+                  type="text"
+                  value={triggerFormData.registration_number}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, registration_number: e.target.value }))}
+                  placeholder="e.g., KCA123A"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Identity Number</label>
+                <input
+                  type="text"
+                  value={triggerFormData.identity_num}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, identity_num: e.target.value }))}
+                  placeholder="e.g., 12345678"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Loan Statuses</label>
+                <input
+                  type="text"
+                  value={triggerFormData.loan_statuses}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, loan_statuses: e.target.value }))}
+                  placeholder="e.g., 1002,1003"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Repeat Client</label>
+                <input
+                  type="number"
+                  value={triggerFormData.repeat_client}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, repeat_client: e.target.value }))}
+                  placeholder="0 or 1"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  min="0"
+                  max="1"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Loan Type</label>
+                <input
+                  type="number"
+                  value={triggerFormData.loan_type}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, loan_type: e.target.value }))}
+                  placeholder="e.g., 0"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Office ID</label>
+                <input
+                  type="text"
+                  value={triggerFormData.office_id}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, office_id: e.target.value }))}
+                  placeholder="e.g., 0b8048171e800000"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mt-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Apply Time Begin</label>
+                <input
+                  type="datetime-local"
+                  value={triggerFormData.apply_time_begin}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, apply_time_begin: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Apply Time End</label>
+                <input
+                  type="datetime-local"
+                  value={triggerFormData.apply_time_end}
+                  onChange={(e) => setTriggerFormData(prev => ({ ...prev, apply_time_end: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button variant="outline" onClick={() => setIsTriggerJobModalOpen(false)} disabled={isSubmitting}>Cancel</Button>
+            <Button onClick={handleTriggerJob} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700">
+              {isSubmitting ? 'Triggering...' : 'Trigger Job'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Export Modal */}
+      <Modal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        title="Export Analytics Data"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">Choose export format and options</p>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Format</label>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={() => setExportFormat('csv')}
+                className={`p-3 border rounded-lg text-center ${exportFormat === 'csv' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
+              >
+                <FileText size={24} className="mx-auto mb-1 text-gray-600" />
+                <span className="text-xs">CSV</span>
+              </button>
+              <button
+                onClick={() => setExportFormat('excel')}
+                className={`p-3 border rounded-lg text-center ${exportFormat === 'excel' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
+              >
+                <FileSpreadsheet size={24} className="mx-auto mb-1 text-green-600" />
+                <span className="text-xs">Excel</span>
+              </button>
+              <button
+                onClick={() => setExportFormat('pdf')}
+                className={`p-3 border rounded-lg text-center ${exportFormat === 'pdf' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
+              >
+                <FileBarChart size={24} className="mx-auto mb-1 text-red-600" />
+                <span className="text-xs">PDF</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Period</label>
+            <select className="w-full px-3 py-2 border border-gray-300 rounded-md" value={selectedTimeRange} onChange={(e) => setSelectedTimeRange(e.target.value as any)}>
+              <option value="7d">Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+              <option value="90d">Last 90 Days</option>
+              <option value="1y">Last Year</option>
+            </select>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button variant="outline" onClick={() => setIsExportModalOpen(false)}>Cancel</Button>
+            <Button onClick={handleExportData} className="bg-blue-600 hover:bg-blue-700">
+              <DownloadCloud size={16} className="mr-2" />
+              Export
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Job Details Modal */}
+      {selectedJob && (
+        <Modal
+          isOpen={isJobDetailsModalOpen}
+          onClose={() => { setIsJobDetailsModalOpen(false); setSelectedJob(null); }}
+          title="Job Details"
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className={`px-2 py-1 text-sm rounded-full ${getStatusColor(selectedJob?.status)}`}>{selectedJob?.status}</span>
+              <span className="text-xs text-gray-500">Job ID: {selectedJob?.id}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-xs text-gray-500">Started At</p>
+                <p className="font-medium">{formatDateTime(selectedJob?.started_at)}</p>
+              </div>
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-xs text-gray-500">Completed At</p>
+                <p className="font-medium">{selectedJob?.completed_at ? formatDateTime(selectedJob?.completed_at) : 'N/A'}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-gray-600">Duration</p>
+                <p className="text-lg font-semibold">{selectedJob?.duration_seconds ? formatDuration(selectedJob?.duration_seconds) : 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Progress</p>
+                <p className="text-lg font-semibold">{selectedJob?.progress_percentage?.toFixed(1)}%</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Loan Processing Stats</p>
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="bg-gray-50 p-2 rounded"><p className="text-xs text-gray-500">Total</p><p className="font-medium">{selectedJob?.total_loans}</p></div>
+                <div className="bg-gray-50 p-2 rounded"><p className="text-xs text-gray-500">Processed</p><p className="font-medium">{selectedJob?.processed_loans}</p></div>
+                <div className="bg-gray-50 p-2 rounded"><p className="text-xs text-gray-500">Success</p><p className="font-medium text-green-600">{selectedJob?.successful_fetches}</p></div>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Updates</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div><p className="text-xs text-gray-500">Main Loans</p><p className="font-medium">Created: {selectedJob?.main_loans_created}</p><p className="font-medium">Updated: {selectedJob?.main_loans_updated}</p></div>
+                <div><p className="text-xs text-gray-500">Installments</p><p className="font-medium">Created: {selectedJob?.installments_created}</p><p className="font-medium">Updated: {selectedJob?.installments_updated}</p></div>
+              </div>
+            </div>
+
+            {selectedJob?.filter_params && selectedJob?.filter_params !== '{}' && (
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-1">Applied Filters</p>
+                <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-32">
+                  {JSON.stringify(JSON.parse(selectedJob?.filter_params?.replace(/'/g, '"')), null, 2)}
+                </pre>
+              </div>
+            )}
+
+            {selectedJob?.error_message && (
+              <div className="p-3 bg-red-50 rounded-lg">
+                <p className="text-sm font-medium text-red-800 mb-1">Error Message</p>
+                <p className="text-xs text-red-700">{selectedJob?.error_message}</p>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-4">
+              <Button variant="outline" onClick={() => setIsJobDetailsModalOpen(false)}>Close</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

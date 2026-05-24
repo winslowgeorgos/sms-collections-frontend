@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePermissions } from '@/context/permission-context';
-import InstallmentTable from '@/components/loans/InstallmentTable';
+import InstallmentBreakdownTable from '@/components/loans/InstallmentTable';
 import CreateCallLogModal from '@/components/call_logs/CreateCallLogModal';
 import AddPaymentReminderModal from '@/components/call_logs/AddPaymentReminderModal';
 import SendSMSModal from '@/components/loans/SendSMSModal';
@@ -822,10 +822,11 @@ const handleSendDemandLetterEmail = async () => {
           {activeTab === 'installments' && (
             <div>
               <h3 className="text-lg font-medium mb-4">Installment Schedule</h3>
-              <InstallmentTable 
-                installments={installments}
-                onViewDetails={handleViewInstallment}
-              />
+           <InstallmentBreakdownTable
+  installments={installments}
+  onViewDetails={handleViewInstallment}
+  currentMonthInstallmentId={current_month_installment?.installment_id}
+/>
             </div>
           )}
 
