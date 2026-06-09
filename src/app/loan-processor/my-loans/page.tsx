@@ -20,7 +20,9 @@ import {
   CheckCircle, Calendar, Phone, X,
   SlidersHorizontal, Filter, Clock, PhoneCall,
   CalendarRange, TrendingUp, DollarSign, Users,
-  Info, Plus, Minus, CalendarDays
+  Info, Plus, Minus, CalendarDays, Gavel, 
+  ShieldAlert, Car, Scale, Ban, Briefcase,
+  FileText, Flag, AlertTriangle
 } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -53,16 +55,58 @@ interface FilterState {
   disburse_date_after?: string;
   disburse_date_before?: string;
   current_month_only?: string;
-  // New filters
+  // Call log filters
   call_log_created_after?: string;
   call_log_created_before?: string;
   without_call_log_created_after?: string;
   without_call_log_created_before?: string;
+  // Current installment due date
   current_installment_due_date_start?: string;
   current_installment_due_date_end?: string;
+  // Escalation/Repossession filters
+  cumulative_balance_gt_zero?: string;
+  actual_repossessed?: string;
+  auto_escalated_after?: string;
+  auto_escalated_before?: string;
+  auto_escalated_has?: string;
+  collection_condition?: string;
+  collection_condition_not?: string;
+  repossession_completed_after?: string;
+  repossession_completed_before?: string;
+  repossession_completed_has?: string;
+  repossession_marked_after?: string;
+  repossession_marked_before?: string;
+  repossession_marked_has?: string;
+  repossession_status?: string;
+  repossession_status_not?: string;
+  to_repossess?: string;
   ordering?: string;
   page_size?: string;
 }
+
+// Collection condition options based on models.py
+const COLLECTION_CONDITIONS = [
+  { value: 'collectable', label: 'Collectable (Default)' },
+  { value: 'in_yard', label: 'In the Yard' },
+  { value: 'police_case', label: 'Police Case' },
+  { value: 'law_court', label: 'Law Court' },
+  { value: 'in_auction', label: 'In Auctioneer' },
+  { value: 'third_party', label: 'Third Party Collection' },
+  { value: 'restructured', label: 'Restructured Payment Plan' },
+  { value: 'written_off', label: 'Written Off' },
+  { value: 'settled', label: 'Settled' },
+];
+
+// Repossession status options
+const REPOSSESSION_STATUSES = [
+  { value: 'not_started', label: 'Not Started' },
+  { value: 'marked', label: 'Marked for Repossession' },
+  { value: 'in_progress', label: 'Repossession in Progress' },
+  { value: 'repossessed', label: 'Repossessed' },
+  { value: 'released', label: 'Released (Customer Paid)' },
+  { value: 'court_ordered', label: 'Court Ordered' },
+  { value: 'disputed', label: 'Disputed' },
+];
 
 export default function MyLoansPage() {
   const router = useRouter();
@@ -76,7 +120,13 @@ export default function MyLoansPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState<FilterState>({});
+  
+  // ============ SET DEFAULT FILTERS HERE ============
+  // Initialize filters with cumulative_balance_gt_zero = 'true'
+  const [filters, setFilters] = useState<FilterState>({
+    cumulative_balance_gt_zero: 'true'  // Default filter applied
+  });
+  
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   
   // Advanced filter state
@@ -99,22 +149,33 @@ export default function MyLoansPage() {
     disburse_date_after: '',
     disburse_date_before: '',
     current_month_only: null as string | null,
-    // New filters
+    // Call log filters
     call_log_created_after: '',
     call_log_created_before: '',
     without_call_log_created_after: '',
     without_call_log_created_before: '',
+    // Current installment due date
     current_installment_due_date_start: '',
     current_installment_due_date_end: '',
+    // Escalation/Repossession filters
+    cumulative_balance_gt_zero: 'true',  // Default to true in advanced filters too
+    actual_repossessed: null as string | null,
+    auto_escalated_after: '',
+    auto_escalated_before: '',
+    auto_escalated_has: null as string | null,
+    collection_condition: '',
+    collection_condition_not: '',
+    repossession_completed_after: '',
+    repossession_completed_before: '',
+    repossession_completed_has: null as string | null,
+    repossession_marked_after: '',
+    repossession_marked_before: '',
+    repossession_marked_has: null as string | null,
+    repossession_status: '',
+    repossession_status_not: '',
+    to_repossess: null as string | null,
     ordering: '-disburse_time',
   });
-
-  // Helper to format month-day for API (DD/MM)
-  const formatMonthDay = (date: Date) => {
-    const day = date.getDate().toString().padStart(2, '0');
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    return `${day}/${month}`;
-  };
 
   const fetchMyLoans = useCallback(async () => {
     setIsLoading(true);
@@ -197,7 +258,8 @@ export default function MyLoansPage() {
   };
 
   const clearFilters = () => {
-    setFilters({});
+    // Reset to default filter (cumulative_balance_gt_zero = true)
+    setFilters({ cumulative_balance_gt_zero: 'true' });
     setSearchTerm('');
     setPage(1);
     setAdvancedFilters({
@@ -225,6 +287,22 @@ export default function MyLoansPage() {
       without_call_log_created_before: '',
       current_installment_due_date_start: '',
       current_installment_due_date_end: '',
+      cumulative_balance_gt_zero: 'true',
+      actual_repossessed: null,
+      auto_escalated_after: '',
+      auto_escalated_before: '',
+      auto_escalated_has: null,
+      collection_condition: '',
+      collection_condition_not: '',
+      repossession_completed_after: '',
+      repossession_completed_before: '',
+      repossession_completed_has: null,
+      repossession_marked_after: '',
+      repossession_marked_before: '',
+      repossession_marked_has: null,
+      repossession_status: '',
+      repossession_status_not: '',
+      to_repossess: null,
       ordering: '-disburse_time',
     });
   };
@@ -285,13 +363,28 @@ export default function MyLoansPage() {
       without_call_log_created_before: '',
       current_installment_due_date_start: '',
       current_installment_due_date_end: '',
+      cumulative_balance_gt_zero: 'true',
+      actual_repossessed: null,
+      auto_escalated_after: '',
+      auto_escalated_before: '',
+      auto_escalated_has: null,
+      collection_condition: '',
+      collection_condition_not: '',
+      repossession_completed_after: '',
+      repossession_completed_before: '',
+      repossession_completed_has: null,
+      repossession_marked_after: '',
+      repossession_marked_before: '',
+      repossession_marked_has: null,
+      repossession_status: '',
+      repossession_status_not: '',
+      to_repossess: null,
       ordering: '-disburse_time',
     });
   };
 
   const activeFilterCount = Object.values(filters).filter(v => v && v !== '').length + (searchTerm ? 1 : 0);
 
-  // Enhanced columns (unchanged, but kept)
   const columns = [
     {
       id: 'loan_id',
@@ -340,9 +433,9 @@ export default function MyLoansPage() {
       filter: { type: 'number_range' as const, placeholder: 'Amount' }
     },
     {
-      id: 'total_outstanding',
-      label: 'Outstanding',
-      accessor: (row: MyLoan) => row.total_outstanding,
+      id: 'current_month_total_due',
+      label: 'Outstanding Cumulative',
+      accessor: (row: MyLoan) => row.current_month_total_due,
       Cell: (value: string, row: MyLoan) => {
         const outstanding = parseFloat(value);
         return (
@@ -366,13 +459,6 @@ export default function MyLoansPage() {
         
         let colorClass = 'text-gray-600';
         let bgClass = '';
-        if (daysUntilDue < 0) {
-          colorClass = 'text-red-700';
-          bgClass = 'bg-red-50';
-        } else if (daysUntilDue <= 7) {
-          colorClass = 'text-orange-700';
-          bgClass = 'bg-orange-50';
-        }
         
         return (
           <div className={`px-2 py-1 rounded-md ${bgClass} ${colorClass} font-medium`}>
@@ -390,17 +476,24 @@ export default function MyLoansPage() {
       id: 'status',
       label: 'Status',
       accessor: (row: MyLoan) => {
-        const isOverdue = row.is_overdue_status;
-        const hasOutstanding = parseFloat(row.total_outstanding) > 0;
+        const isOverdue = row.current_month_installment_due_date  ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment=== true : false;
+        const hasOutstanding = parseFloat(row.current_month_total_due) > 0;
+        if (row.has_current_month_installment === false) return 'Undue';
         if (hasOutstanding && isOverdue) return 'Overdue';
         if (hasOutstanding) return 'Current';
         return 'Paid';
       },
       Cell: (value: string, row: MyLoan) => {
-        const isOverdue = row.is_overdue_status;
-        const hasOutstanding = parseFloat(row.total_outstanding) > 0;
-        
-        if (hasOutstanding && isOverdue) {
+        const isOverdue = row.current_month_installment_due_date  ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment=== true : false;
+        const hasOutstanding = parseFloat(row.current_month_total_due) > 0;
+        if(row.has_current_month_installment === false) {
+          return (
+            <Badge variant="secondary" className="gap-1">
+              <Calendar size={12} /> Undue
+            </Badge>
+          );
+        }
+        else if (hasOutstanding && isOverdue) {
           return (
             <Badge variant="error" className="gap-1">
               <AlertCircle size={12} /> Overdue
@@ -423,7 +516,7 @@ export default function MyLoansPage() {
       width: 100,
       filter: {
         type: 'choices' as const,
-        choices: ['Overdue', 'Current', 'Paid'],
+        choices: ['Overdue', 'Current', 'Paid', 'Undue'],
         placeholder: 'Status'
       }
     },
@@ -481,11 +574,13 @@ export default function MyLoansPage() {
     },
   ];
 
-  // Helper to get summary stats
-  const totalOutstanding = data.results.reduce((sum, loan) => sum + parseFloat(loan.total_outstanding), 0);
-  const overdueLoans = data.results.filter(loan => loan.is_overdue_status && parseFloat(loan.total_outstanding) > 0).length;
-  const paidLoans = data.results.filter(loan => parseFloat(loan.total_outstanding) === 0).length;
-  const collectionRate = data.results.length > 0 ? (paidLoans / data.results.length) * 100 : 0;
+  const totalOutstanding = data.results.reduce((sum, loan) => sum + parseFloat(loan.current_month_total_due || '0'), 0);
+  const totalAmount = data.results.reduce((sum, loan) => sum + parseFloat(loan.total_amount || '0'), 0);
+  const collectedAmount = totalAmount - totalOutstanding;
+  const collectionRate = totalAmount === 0 ? 0 : (collectedAmount / totalAmount) * 100;
+  const overdueLoans = data.results.filter(loan => loan.is_overdue_status && parseFloat(loan.total_outstanding || '0') > 0).length;
+  const paidLoans = data.results.filter(loan => parseFloat(loan.total_outstanding || '0') === 0).length;
+  const repossessedLoans = 0
 
   return (
     <div className="space-y-6 p-4 md:p-6 bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
@@ -519,7 +614,7 @@ export default function MyLoansPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
         <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
@@ -533,30 +628,27 @@ export default function MyLoansPage() {
             </div>
           </CardContent>
         </Card>
-        
-     
-
         <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-500 font-medium">Overdue Loans</p>
-                <p className="text-3xl font-bold text-red-700 mt-1">{overdueLoans}</p>
+                <p className="text-sm text-gray-500 font-medium">Total Outstanding</p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">
+                  KSh {totalOutstanding.toLocaleString()}
+                </p>
               </div>
-              <div className="bg-red-100 p-3 rounded-full">
-                <AlertCircle className="h-6 w-6 text-red-600" />
+              <div className="bg-amber-100 p-3 rounded-full">
+                <DollarSign className="h-6 w-6 text-amber-600" />
               </div>
             </div>
           </CardContent>
         </Card>
-
-    
       </div>
 
-      {/* Advanced Filters Modal - Enhanced */}
+      {/* Advanced Filters Modal */}
       {showAdvancedFilters && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <Filter className="h-5 w-5 text-blue-600" />
@@ -652,6 +744,7 @@ export default function MyLoansPage() {
                         <SelectItem value="Overdue">Overdue</SelectItem>
                         <SelectItem value="Current">Current</SelectItem>
                         <SelectItem value="Paid">Paid</SelectItem>
+                        <SelectItem value="Undue">Undue</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -668,6 +761,263 @@ export default function MyLoansPage() {
                         <SelectItem value="true">Only Current Month Installment</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="cumulative_balance_gt_zero">Active Loans (Balance &gt; 0)</Label>
+                    <Select
+                      value={advancedFilters.cumulative_balance_gt_zero || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, cumulative_balance_gt_zero: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">Yes (Active Loans Only)</SelectItem>
+                        <SelectItem value="false">No (Show All)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-gray-500 mt-1">Default: Active loans with balance &gt; 0</p>
+                  </div>
+                </div>
+              </section>
+
+              {/* Escalation & Repossession Filters */}
+              <section>
+                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
+                  <Gavel size={18} className="text-red-500" />
+                  Repossession & Escalation
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="to_repossess">Marked for Repossession</Label>
+                    <Select
+                      value={advancedFilters.to_repossess || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, to_repossess: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">Yes</SelectItem>
+                        <SelectItem value="false">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="actual_repossessed">Actually Repossessed</Label>
+                    <Select
+                      value={advancedFilters.actual_repossessed || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, actual_repossessed: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">Yes</SelectItem>
+                        <SelectItem value="false">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="repossession_status">Repossession Status</Label>
+                    <Select
+                      value={advancedFilters.repossession_status || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_status: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="All Statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REPOSSESSION_STATUSES.map(status => (
+                          <SelectItem key={status.value} value={status.value}>
+                            {status.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="repossession_status_not">Exclude Repossession Status</Label>
+                    <Select
+                      value={advancedFilters.repossession_status_not || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_status_not: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REPOSSESSION_STATUSES.map(status => (
+                          <SelectItem key={status.value} value={status.value}>
+                            Exclude {status.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="repossession_marked_has">Has Repossession Mark Date</Label>
+                    <Select
+                      value={advancedFilters.repossession_marked_has || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_marked_has: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">Yes</SelectItem>
+                        <SelectItem value="false">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="repossession_completed_has">Has Repossession Completion Date</Label>
+                    <Select
+                      value={advancedFilters.repossession_completed_has || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_completed_has: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">Yes</SelectItem>
+                        <SelectItem value="false">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <Label htmlFor="repossession_marked_after">Repossession Marked After</Label>
+                    <Input
+                      type="date"
+                      id="repossession_marked_after"
+                      value={advancedFilters.repossession_marked_after}
+                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_marked_after: e.target.value})}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="repossession_marked_before">Repossession Marked Before</Label>
+                    <Input
+                      type="date"
+                      id="repossession_marked_before"
+                      value={advancedFilters.repossession_marked_before}
+                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_marked_before: e.target.value})}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="repossession_completed_after">Repossession Completed After</Label>
+                    <Input
+                      type="date"
+                      id="repossession_completed_after"
+                      value={advancedFilters.repossession_completed_after}
+                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_completed_after: e.target.value})}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="repossession_completed_before">Repossession Completed Before</Label>
+                    <Input
+                      type="date"
+                      id="repossession_completed_before"
+                      value={advancedFilters.repossession_completed_before}
+                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_completed_before: e.target.value})}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* Collection Condition Filters */}
+              <section>
+                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
+                  <ShieldAlert size={18} className="text-purple-500" />
+                  Collection Condition
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="collection_condition">Collection Condition</Label>
+                    <Select
+                      value={advancedFilters.collection_condition || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, collection_condition: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="All Conditions" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {COLLECTION_CONDITIONS.map(condition => (
+                          <SelectItem key={condition.value} value={condition.value}>
+                            {condition.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="collection_condition_not">Exclude Collection Condition</Label>
+                    <Select
+                      value={advancedFilters.collection_condition_not || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, collection_condition_not: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {COLLECTION_CONDITIONS.map(condition => (
+                          <SelectItem key={condition.value} value={condition.value}>
+                            Exclude {condition.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </section>
+
+              {/* Auto Escalation Filters */}
+              <section>
+                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
+                  <Clock size={18} className="text-orange-500" />
+                  Auto Escalation (21+ Days Overdue)
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="auto_escalated_has">Has Auto Escalation</Label>
+                    <Select
+                      value={advancedFilters.auto_escalated_has || undefined}
+                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, auto_escalated_has: value})}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">Yes</SelectItem>
+                        <SelectItem value="false">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <Label htmlFor="auto_escalated_after">Auto Escalated After</Label>
+                    <Input
+                      type="date"
+                      id="auto_escalated_after"
+                      value={advancedFilters.auto_escalated_after}
+                      onChange={(e) => setAdvancedFilters({...advancedFilters, auto_escalated_after: e.target.value})}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="auto_escalated_before">Auto Escalated Before</Label>
+                    <Input
+                      type="date"
+                      id="auto_escalated_before"
+                      value={advancedFilters.auto_escalated_before}
+                      onChange={(e) => setAdvancedFilters({...advancedFilters, auto_escalated_before: e.target.value})}
+                      className="mt-1"
+                    />
                   </div>
                 </div>
               </section>
@@ -716,7 +1066,7 @@ export default function MyLoansPage() {
                 </div>
               </section>
 
-              {/* Date Filters (Standard) */}
+              {/* Date Filters */}
               <section>
                 <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
                   <CalendarRange size={18} className="text-purple-500" />
@@ -747,7 +1097,7 @@ export default function MyLoansPage() {
                 </div>
               </section>
 
-              {/* NEW: Call Log Filters */}
+              {/* Call Log Filters */}
               <section>
                 <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
                   <PhoneCall size={18} className="text-indigo-500" />
@@ -795,7 +1145,7 @@ export default function MyLoansPage() {
                 </div>
               </section>
 
-              {/* NEW: Current Installment Due Date (Month-Day) */}
+              {/* Current Installment Due Date (Month-Day) */}
               <section>
                 <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
                   <CalendarDays size={18} className="text-teal-500" />
@@ -849,6 +1199,8 @@ export default function MyLoansPage() {
                       <SelectItem value="total_outstanding">Outstanding (Lowest First)</SelectItem>
                       <SelectItem value="-assigned_at">Recently Assigned</SelectItem>
                       <SelectItem value="assigned_at">Oldest Assigned</SelectItem>
+                      <SelectItem value="-to_repossess">Repossession Marked First</SelectItem>
+                      <SelectItem value="-auto_escalated_at">Auto Escalated First</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -896,13 +1248,51 @@ export default function MyLoansPage() {
             if (key === 'without_call_log_created_before') label = 'No call log before';
             if (key === 'current_installment_due_date_start') label = 'Due date start (MM-DD)';
             if (key === 'current_installment_due_date_end') label = 'Due date end (MM-DD)';
+            if (key === 'cumulative_balance_gt_zero') label = 'Active Loans Only';
+            if (key === 'actual_repossessed') label = 'Actually Repossessed';
+            if (key === 'auto_escalated_after') label = 'Auto escalated after';
+            if (key === 'auto_escalated_before') label = 'Auto escalated before';
+            if (key === 'auto_escalated_has') label = 'Has Auto Escalation';
+            if (key === 'collection_condition') label = 'Collection Condition';
+            if (key === 'collection_condition_not') label = 'Exclude Collection';
+            if (key === 'repossession_completed_after') label = 'Repossession completed after';
+            if (key === 'repossession_completed_before') label = 'Repossession completed before';
+            if (key === 'repossession_completed_has') label = 'Has Completion Date';
+            if (key === 'repossession_marked_after') label = 'Repossession marked after';
+            if (key === 'repossession_marked_before') label = 'Repossession marked before';
+            if (key === 'repossession_marked_has') label = 'Has Mark Date';
+            if (key === 'repossession_status') label = 'Repossession Status';
+            if (key === 'repossession_status_not') label = 'Exclude Repossession';
+            if (key === 'to_repossess') label = 'Marked for Repossession';
             
             let displayValue = value;
             if (key === 'is_overdue') displayValue = value === 'true' ? 'Overdue' : 'Not Overdue';
             if (key === 'current_month_only') displayValue = 'Yes';
+            if (key === 'to_repossess') displayValue = value === 'true' ? 'Yes' : 'No';
+            if (key === 'actual_repossessed') displayValue = value === 'true' ? 'Yes' : 'No';
+            if (key === 'cumulative_balance_gt_zero') displayValue = value === 'true' ? 'Active Only' : 'All Loans';
+            if (key === 'auto_escalated_has') displayValue = value === 'true' ? 'Yes' : 'No';
+            if (key === 'repossession_marked_has') displayValue = value === 'true' ? 'Yes' : 'No';
+            if (key === 'repossession_completed_has') displayValue = value === 'true' ? 'Yes' : 'No';
+            
+            if (key === 'collection_condition' && value) {
+              const found = COLLECTION_CONDITIONS.find(c => c.value === value);
+              if (found) displayValue = found.label;
+            }
+            
+            if (key === 'repossession_status' && value && !value.includes(',')) {
+              const found = REPOSSESSION_STATUSES.find(s => s.value === value);
+              if (found) displayValue = found.label;
+            }
+            
+            const isDefaultFilter = key === 'cumulative_balance_gt_zero' && value === 'true';
             
             return (
-              <Badge key={key} variant="outline" className="gap-1 pl-2 pr-1 py-1 bg-blue-50 text-blue-800 border-blue-200">
+              <Badge 
+                key={key} 
+                variant="outline" 
+                className={`gap-1 pl-2 pr-1 py-1 ${isDefaultFilter ? 'bg-green-50 text-green-800 border-green-200' : 'bg-blue-50 text-blue-800 border-blue-200'}`}
+              >
                 {label}: {displayValue}
                 <button
                   onClick={() => {

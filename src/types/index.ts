@@ -282,6 +282,9 @@ export interface FlaggedCustomer {
 
 // types/index.ts - Add these to your existing types
 
+
+// types/index.ts - Update MyLoan interface if it exists separately
+
 export interface Loan {
   id: string;
   loan_id: string;
@@ -315,16 +318,29 @@ export interface Loan {
   has_current_month_installment: boolean;
   current_month_installments_count: number;
   current_month_total_due: string;
+  current_month_cumulative_balance: string;
   is_overdue_status: boolean;
   days_overdue_count: number;
   is_active: boolean;
   active_installment_id: number;
   paybill_number: string;
   loan_provider_name: string;
-  current_month_installment_due_date:string;
+  current_month_installment_due_date: string;
   created_at: string;
   updated_at: string;
   last_sync_at: string;
+  
+  // ============ ESCALATION/REPOSSESSION FIELDS ============
+  to_repossess: boolean;
+  actual_repossessed: boolean;
+  repossession_status: string;
+  repossession_status_display: string;
+  collection_condition: string;
+  collection_condition_display: string;
+  repossession_marked_at: string | null;
+  repossession_completed_at: string | null;
+  auto_escalated_at: string | null;
+  repossession_notes: string | null;
 }
 
 export interface OfficerDetails {

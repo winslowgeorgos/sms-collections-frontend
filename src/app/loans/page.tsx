@@ -12,11 +12,15 @@ import { Loan } from '@/types/index';
 import { 
   Plus, Edit, Trash2, Search, Filter, UserPlus, Download, 
   AlertCircle, Calendar, DollarSign, Users, TrendingUp,
-  Eye, CheckCircle, XCircle, Clock, RefreshCw
+  Eye, CheckCircle, XCircle, Clock, RefreshCw, Gavel,
+  ShieldAlert, Car, Scale, Ban, Briefcase, FileText, Flag,
+  AlertTriangle, Building2, Hammer, Handshake, XCircle as XCircleIcon,
+  CheckCircle2
 } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
 import Link from 'next/link';
 import { ActionGuard } from '@/components/auth/action-guard';
+import { Badge } from '@/components/ui/badge';
 
 interface LoanFilters {
   officer_id?: string;
@@ -40,6 +44,23 @@ interface LoanFilters {
   disburse_date_before?: string;
   due_date_after?: string;
   due_date_before?: string;
+  // Escalation/Repossession filters
+  cumulative_balance_gt_zero?: boolean;
+  actual_repossessed?: boolean;
+  auto_escalated_after?: string;
+  auto_escalated_before?: string;
+  auto_escalated_has?: boolean;
+  collection_condition?: string;
+  collection_condition_not?: string;
+  repossession_completed_after?: string;
+  repossession_completed_before?: string;
+  repossession_completed_has?: boolean;
+  repossession_marked_after?: string;
+  repossession_marked_before?: string;
+  repossession_marked_has?: boolean;
+  repossession_status?: string;
+  repossession_status_not?: string;
+  to_repossess?: boolean;
   ordering?: string;
   page: number;
   page_size: number;
@@ -60,6 +81,30 @@ interface LoanStats {
   timestamp: string;
 }
 
+// Collection condition options based on models.py
+const COLLECTION_CONDITIONS = [
+  { value: 'collectable', label: 'Collectable (Default)', icon: CheckCircle2, color: 'green' },
+  { value: 'in_yard', label: 'In the Yard', icon: Car, color: 'blue' },
+  { value: 'police_case', label: 'Police Case', icon: ShieldAlert, color: 'red' },
+  { value: 'law_court', label: 'Law Court', icon: Scale, color: 'purple' },
+  { value: 'in_auction', label: 'In Auctioneer', icon: Hammer, color: 'amber' },
+  { value: 'third_party', label: 'Third Party Collection', icon: Handshake, color: 'indigo' },
+  { value: 'restructured', label: 'Restructured Payment Plan', icon: FileText, color: 'teal' },
+  { value: 'written_off', label: 'Written Off', icon: XCircleIcon, color: 'gray' },
+  { value: 'settled', label: 'Settled', icon: CheckCircle2, color: 'emerald' },
+];
+
+// Repossession status options
+const REPOSSESSION_STATUSES = [
+  { value: 'not_started', label: 'Not Started', color: 'gray' },
+  { value: 'marked', label: 'Marked for Repossession', color: 'orange' },
+  { value: 'in_progress', label: 'Repossession in Progress', color: 'blue' },
+  { value: 'repossessed', label: 'Repossessed', color: 'red' },
+  { value: 'released', label: 'Released (Customer Paid)', color: 'green' },
+  { value: 'court_ordered', label: 'Court Ordered', color: 'purple' },
+  { value: 'disputed', label: 'Disputed', color: 'amber' },
+];
+
 export default function LoansPage() {
   const router = useRouter();
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -67,6 +112,7 @@ export default function LoansPage() {
   const [filters, setFilters] = useState<LoanFilters>({
     page: 1,
     page_size: 20,
+    cumulative_balance_gt_zero: true, // Default to active loans only
     officer_id: undefined,
     officer_username: undefined,
     loan_id: undefined,
@@ -136,7 +182,24 @@ export default function LoansPage() {
     filters.due_date_after,
     filters.due_date_before,
     filters.ordering,
-    filters.search
+    filters.search,
+    // Escalation filters
+    filters.cumulative_balance_gt_zero,
+    filters.actual_repossessed,
+    filters.auto_escalated_after,
+    filters.auto_escalated_before,
+    filters.auto_escalated_has,
+    filters.collection_condition,
+    filters.collection_condition_not,
+    filters.repossession_completed_after,
+    filters.repossession_completed_before,
+    filters.repossession_completed_has,
+    filters.repossession_marked_after,
+    filters.repossession_marked_before,
+    filters.repossession_marked_has,
+    filters.repossession_status,
+    filters.repossession_status_not,
+    filters.to_repossess
   ]);
 
   const fetchLoans = async () => {
@@ -194,6 +257,7 @@ export default function LoansPage() {
     setFilters({
       page: 1,
       page_size: 20,
+      cumulative_balance_gt_zero: true,
       officer_id: undefined,
       officer_username: undefined,
       loan_id: undefined,
@@ -222,7 +286,8 @@ export default function LoansPage() {
       page: 1,
       page_size: 20,
       ordering: '-disburse_time',
-      current_month_only: false
+      current_month_only: false,
+      cumulative_balance_gt_zero: true
     });
   };
 
@@ -265,13 +330,10 @@ export default function LoansPage() {
     let ordering = filters.ordering || '';
     
     if (ordering === columnId) {
-      // Currently ascending, change to descending
       ordering = `-${columnId}`;
     } else if (ordering === `-${columnId}`) {
-      // Currently descending, remove sort
       ordering = '';
     } else {
-      // Not sorted, set to ascending
       ordering = columnId;
     }
     
@@ -286,6 +348,51 @@ export default function LoansPage() {
   const applyAdvancedFilters = () => {
     setFilters({ ...tempFilters, page: 1 });
     setIsFilterModalOpen(false);
+  };
+
+  // Helper function to get collection condition badge
+  const getCollectionConditionBadge = (condition: string) => {
+    const found = COLLECTION_CONDITIONS.find(c => c.value === condition);
+    const Icon = found?.icon || AlertTriangle;
+    const colorMap: Record<string, string> = {
+      green: 'bg-green-100 text-green-800 border-green-200',
+      blue: 'bg-blue-100 text-blue-800 border-blue-200',
+      red: 'bg-red-100 text-red-800 border-red-200',
+      purple: 'bg-purple-100 text-purple-800 border-purple-200',
+      amber: 'bg-amber-100 text-amber-800 border-amber-200',
+      indigo: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+      teal: 'bg-teal-100 text-teal-800 border-teal-200',
+      gray: 'bg-gray-100 text-gray-800 border-gray-200',
+      emerald: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    };
+    const colorClass = colorMap[found?.color || 'gray'];
+    
+    return (
+      <Badge className={`${colorClass} gap-1`}>
+        <Icon size={12} />
+        {found?.label || condition || 'Collectable'}
+      </Badge>
+    );
+  };
+
+  // Helper function to get repossession status badge
+  const getRepossessionStatusBadge = (status: string) => {
+    const found = REPOSSESSION_STATUSES.find(s => s.value === status);
+    const colorMap: Record<string, string> = {
+      gray: 'bg-gray-100 text-gray-800',
+      orange: 'bg-orange-100 text-orange-800',
+      blue: 'bg-blue-100 text-blue-800',
+      red: 'bg-red-100 text-red-800',
+      green: 'bg-green-100 text-green-800',
+      purple: 'bg-purple-100 text-purple-800',
+      amber: 'bg-amber-100 text-amber-800',
+    };
+    
+    return (
+      <Badge className={`${colorMap[found?.color || 'gray']} gap-1`}>
+        {found?.label || status || 'Not Started'}
+      </Badge>
+    );
   };
 
   const columns = [
@@ -308,7 +415,7 @@ export default function LoansPage() {
       id: 'customer_name',
       label: 'Customer Name',
       accessor: (row: Loan) => row.customer_name,
-      width: 220,
+      width: 200,
       sortable: true,
     },
     {
@@ -338,7 +445,7 @@ export default function LoansPage() {
         
         return (
           <div>
-            <span className={outstanding > 0 ? 'text-gray-600 font-medium' : 'text-gray-500'}>
+            <span className={outstanding > 0 ? 'text-amber-700 font-medium' : 'text-green-700'}>
               KSh {outstanding.toLocaleString()}
             </span>
             {outstanding > 0 && (
@@ -349,21 +456,36 @@ export default function LoansPage() {
           </div>
         );
       },
-      width: 140,
+      width: 150,
       sortable: true,
     },
     {
-      id: 'due_date',
-      label: 'Due Date',
-      accessor: (row: Loan) => row.due_date,
+      id: 'current_month_total_due',
+      label: 'Current Month Due',
+      accessor: (row: Loan) => row.current_month_total_due,
       Cell: (value: string) => {
+        const amount = parseFloat(value || '0');
+        return (
+          <span className={amount > 0 ? 'text-amber-700 font-medium' : 'text-green-700'}>
+            KSh {amount.toLocaleString()}
+          </span>
+        );
+      },
+      width: 140,
+    },
+    {
+      id: 'current_month_installment_due_date',
+      label: 'Due Date',
+      accessor: (row: Loan) => row.current_month_installment_due_date,
+      Cell: (value: string) => {
+        if (!value) return <span className="text-gray-400">No current month</span>;
         const dueDate = new Date(value);
         const today = new Date();
         const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         
         let colorClass = 'text-gray-600';
-        if (daysUntilDue < 0) colorClass = 'text-gray-600 font-medium';
-        else if (daysUntilDue <= 7) colorClass = 'text-gray-600';
+        if (daysUntilDue < 0) colorClass = 'text-red-700 font-medium';
+        else if (daysUntilDue <= 7) colorClass = 'text-orange-700';
         
         return (
           <div className={colorClass}>
@@ -375,36 +497,46 @@ export default function LoansPage() {
         );
       },
       width: 130,
-      sortable: true,
     },
     {
       id: 'status',
       label: 'Status',
-      accessor: (row: Loan) => row.status,
-      Cell: (value: number, row: Loan) => {
-        const isOverdue = row.is_overdue_status;
-        const hasOutstanding = parseFloat(row.total_outstanding) > 0;
+      accessor: (row: Loan) => {
+        const isOverdue = row.current_month_installment_due_date ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due || '0') > 0 && row.has_current_month_installment === true : false;
+        const hasOutstanding = parseFloat(row.current_month_total_due || '0') > 0;
+        if (row.has_current_month_installment === false) return 'Undue';
+        if (hasOutstanding && isOverdue) return 'Overdue';
+        if (hasOutstanding) return 'Current';
+        return 'Paid';
+      },
+      Cell: (value: string, row: Loan) => {
+        const isOverdue = row.current_month_installment_due_date ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due || '0') > 0 && row.has_current_month_installment === true : false;
+        const hasOutstanding = parseFloat(row.current_month_total_due || '0') > 0;
         
-        if (hasOutstanding && isOverdue) {
+        if (row.has_current_month_installment === false) {
           return (
-            <span className="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800 flex items-center w-fit">
-              <AlertCircle size={12} className="mr-1" />
-              Overdue
-            </span>
+            <Badge variant="secondary" className="gap-1">
+              <Calendar size={12} /> Undue
+            </Badge>
+          );
+        }
+        else if (hasOutstanding && isOverdue) {
+          return (
+            <Badge variant="error" className="gap-1">
+              <AlertCircle size={12} /> Overdue
+            </Badge>
           );
         } else if (hasOutstanding) {
           return (
-            <span className="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800 flex items-center w-fit">
-              <Clock size={12} className="mr-1" />
-              Current
-            </span>
+            <Badge variant="warning" className="bg-amber-100 text-amber-800 hover:bg-amber-200 gap-1">
+              <Calendar size={12} /> Current
+            </Badge>
           );
         } else {
           return (
-            <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800 flex items-center w-fit">
-              <CheckCircle size={12} className="mr-1" />
-              Paid
-            </span>
+            <Badge variant="success" className="bg-green-100 text-green-800 hover:bg-green-200 gap-1">
+              <CheckCircle size={12} /> Paid
+            </Badge>
           );
         }
       },
@@ -425,15 +557,50 @@ export default function LoansPage() {
       width: 130,
     },
     {
-      id: 'days_overdue_count',
-      label: 'Days Overdue',
-      accessor: (row: Loan) => row.days_overdue_count,
-      Cell: (value: number) => (
-        <span className={value > 0 ? 'text-red-600 font-medium' : 'text-gray-500'}>
-          {value > 0 ? `${value} days` : '-'}
-        </span>
-      ),
+      id: 'collection_condition',
+      label: 'Collection Status',
+      accessor: (row: Loan) => row.collection_condition || 'collectable',
+      Cell: (value: string, row: Loan) => getCollectionConditionBadge(row.collection_condition),
+      width: 150,
+    },
+    {
+      id: 'to_repossess',
+      label: 'Repossession',
+      accessor: (row: Loan) => row.to_repossess,
+      Cell: (value: boolean, row: Loan) => {
+        if (row.to_repossess) {
+          return (
+            <Badge variant="error" className="gap-1 bg-red-100 text-red-800 border-red-200">
+              <Gavel size={12} />
+              Marked
+            </Badge>
+          );
+        }
+        if (row.actual_repossessed) {
+          return (
+            <Badge variant="warning" className="gap-1 bg-orange-100 text-orange-800 border-orange-200">
+              <Car size={12} />
+              Repossessed
+            </Badge>
+          );
+        }
+        return <span className="text-gray-400 text-sm">-</span>;
+      },
       width: 100,
+    },
+    {
+      id: 'repossession_status',
+      label: 'Repossession Status',
+      accessor: (row: Loan) => row.repossession_status,
+      Cell: (value: string, row: Loan) => getRepossessionStatusBadge(row.repossession_status),
+      width: 140,
+    },
+    {
+      id: 'assigned_at',
+      label: 'Assigned On',
+      accessor: (row: Loan) => row.assigned_at ? new Date(row.assigned_at).toLocaleDateString() : '-',
+      width: 110,
+      sortable: true,
     },
     {
       id: 'disburse_time',
@@ -441,12 +608,6 @@ export default function LoansPage() {
       accessor: (row: Loan) => new Date(row.disburse_time).toLocaleDateString(),
       width: 110,
       sortable: true,
-    },
-    {
-      id: 'loan_provider_name',
-      label: 'Provider',
-      accessor: (row: Loan) => row.loan_provider_name,
-      width: 150,
     },
     {
       id: 'actions',
@@ -463,7 +624,7 @@ export default function LoansPage() {
           </button>
         </div>
       ),
-      width: 100,
+      width: 80,
     },
   ];
 
@@ -503,7 +664,7 @@ export default function LoansPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center">
@@ -518,7 +679,7 @@ export default function LoansPage() {
           </CardContent>
         </Card>
         
-        <Card>
+        {/* <Card>
           <CardContent className="pt-6">
             <div className="flex items-center">
               <div className="rounded-full bg-purple-100 p-3 mr-4">
@@ -532,9 +693,9 @@ export default function LoansPage() {
               </div>
             </div>
           </CardContent>
-        </Card>
+        </Card> */}
         
-        <Card>
+        {/* <Card>
           <CardContent className="pt-6">
             <div className="flex items-center">
               <div className="rounded-full bg-red-100 p-3 mr-4">
@@ -560,8 +721,8 @@ export default function LoansPage() {
               </div>
             </div>
           </CardContent>
-        </Card>
-        
+        </Card> */}
+{/*         
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center">
@@ -576,50 +737,35 @@ export default function LoansPage() {
               </div>
             </div>
           </CardContent>
-        </Card>
+        </Card> */}
+
+        {/* <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center">
+              <div className="rounded-full bg-orange-100 p-3 mr-4">
+                <Gavel className="h-6 w-6 text-orange-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-600">Marked Repo</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {loans.filter(l => l.to_repossess === true).length}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card> */}
       </div>
 
       {/* Quick Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium text-gray-700">Quick Filters:</span>
-        <Button
-          size="sm"
-          onClick={() => handleFilterChange('is_overdue', filters.is_overdue === true ? undefined : true)}
-          className={filters.is_overdue === true ? "bg-red-600 hover:bg-red-700 text-white" : "bg-white border border-gray-300 hover:bg-gray-50"}
-        >
-          <AlertCircle size={16} className="mr-1" />
-          Overdue Only
-        </Button>
-        <Button
-          size="sm"
-          onClick={() => handleFilterChange('current_month_only', !filters.current_month_only)}
-          className={filters.current_month_only ? "bg-green-600 hover:bg-green-700 text-white" : "bg-white border border-gray-300 hover:bg-gray-50"}
-        >
-          <Calendar size={16} className="mr-1" />
-          Current Month
-        </Button>
-        <Button
-          size="sm"
-          onClick={() => handleFilterChange('assigned_only', filters.assigned_only === true ? undefined : true)}
-          className={filters.assigned_only === true ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-white border border-gray-300 hover:bg-gray-50"}
-        >
-          <Users size={16} className="mr-1" />
-          Assigned Only
-        </Button>
-        <Button
-          size="sm"
-          onClick={() => handleFilterChange('unassigned_only', filters.unassigned_only === true ? undefined : true)}
-          className={filters.unassigned_only === true ? "bg-purple-600 hover:bg-purple-700 text-white" : "bg-white border border-gray-300 hover:bg-gray-50"}
-        >
-          <UserPlus size={16} className="mr-1" />
-          Unassigned Only
-        </Button>
         {(Object.keys(filters).some(key => 
           filters[key as keyof LoanFilters] !== undefined && 
           filters[key as keyof LoanFilters] !== '' && 
           key !== 'page' && 
           key !== 'page_size' && 
-          key !== 'ordering'
+          key !== 'ordering' &&
+          key !== 'cumulative_balance_gt_zero'
         )) && (
           <Button variant="ghost" size="sm" onClick={resetFilters}>
             Clear Filters
@@ -751,11 +897,11 @@ export default function LoansPage() {
 
           {/* Status Filters */}
           <div className="space-y-4">
-            <h3 className="font-medium text-gray-900 border-b pb-2">Status</h3>
+            <h3 className="font-medium text-gray-900 border-b pb-2">Status & Flags</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Status
+                  Loan Status
                 </label>
                 <select
                   value={tempFilters.status || ''}
@@ -763,10 +909,10 @@ export default function LoansPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md"
                 >
                   <option value="">All Statuses</option>
-                  <option value="active">Active</option>
-                  <option value="paid">Paid</option>
-                  <option value="defaulted">Defaulted</option>
-                  <option value="pending">Pending</option>
+                  <option value="Overdue">Overdue</option>
+                  <option value="Current">Current</option>
+                  <option value="Paid">Paid</option>
+                  <option value="Undue">Undue</option>
                 </select>
               </div>
               <div>
@@ -791,23 +937,40 @@ export default function LoansPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Active Status
+                  Active Loans (Balance &gt; 0)
                 </label>
                 <select
-                  value={tempFilters.is_active === undefined ? '' : String(tempFilters.is_active)}
+                  value={tempFilters.cumulative_balance_gt_zero === undefined ? '' : String(tempFilters.cumulative_balance_gt_zero)}
                   onChange={(e) => {
                     const value = e.target.value;
                     setTempFilters(prev => ({ 
                       ...prev, 
-                      is_active: value === '' ? undefined : value === 'true'
+                      cumulative_balance_gt_zero: value === '' ? undefined : value === 'true'
                     }));
                   }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md"
                 >
-                  <option value="">All</option>
-                  <option value="true">Active Only</option>
-                  <option value="false">Inactive Only</option>
+                  <option value="true">Yes (Active Only)</option>
+                  <option value="false">No (Show All)</option>
                 </select>
+                <p className="text-xs text-gray-500 mt-1">Default: Active loans with balance &gt; 0</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Current Month Only
+                </label>
+                <div className="flex items-center mt-2">
+                  <input
+                    type="checkbox"
+                    id="current_month_only_filter"
+                    checked={tempFilters.current_month_only || false}
+                    onChange={(e) => setTempFilters(prev => ({ ...prev, current_month_only: e.target.checked }))}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="current_month_only_filter" className="ml-2 block text-sm text-gray-900">
+                    Only show current month installments
+                  </label>
+                </div>
               </div>
             </div>
             <div className="flex items-center space-x-4">
@@ -834,6 +997,194 @@ export default function LoansPage() {
                 <label htmlFor="unassigned_only" className="ml-2 block text-sm text-gray-900">
                   Unassigned Only
                 </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Repossession & Escalation Filters */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2 flex items-center gap-2">
+              <Gavel size={16} className="text-red-500" />
+              Repossession & Escalation
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Marked for Repossession
+                </label>
+                <select
+                  value={tempFilters.to_repossess === undefined ? '' : String(tempFilters.to_repossess)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      to_repossess: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Actually Repossessed
+                </label>
+                <select
+                  value={tempFilters.actual_repossessed === undefined ? '' : String(tempFilters.actual_repossessed)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      actual_repossessed: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Status
+                </label>
+                <select
+                  value={tempFilters.repossession_status || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_status: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">All Statuses</option>
+                  {REPOSSESSION_STATUSES.map(status => (
+                    <option key={status.value} value={status.value}>{status.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Collection Condition
+                </label>
+                <select
+                  value={tempFilters.collection_condition || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, collection_condition: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">All Conditions</option>
+                  {COLLECTION_CONDITIONS.map(condition => (
+                    <option key={condition.value} value={condition.value}>{condition.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Has Auto Escalation
+                </label>
+                <select
+                  value={tempFilters.auto_escalated_has === undefined ? '' : String(tempFilters.auto_escalated_has)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      auto_escalated_has: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Has Repossession Mark Date
+                </label>
+                <select
+                  value={tempFilters.repossession_marked_has === undefined ? '' : String(tempFilters.repossession_marked_has)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      repossession_marked_has: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Marked After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_marked_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_marked_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Marked Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_marked_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_marked_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Completed After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_completed_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_completed_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Completed Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_completed_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_completed_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Auto Escalated After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.auto_escalated_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, auto_escalated_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Auto Escalated Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.auto_escalated_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, auto_escalated_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
               </div>
             </div>
           </div>
@@ -966,6 +1317,10 @@ export default function LoansPage() {
                 <option value="total_outstanding">Outstanding (Lowest first)</option>
                 <option value="customer_name">Customer Name (A-Z)</option>
                 <option value="-customer_name">Customer Name (Z-A)</option>
+                <option value="-to_repossess">Repossession Marked First</option>
+                <option value="-auto_escalated_at">Auto Escalated First</option>
+                <option value="-collection_condition">Collection Status</option>
+                <option value="-repossession_status">Repossession Status</option>
               </select>
             </div>
           </div>
@@ -983,7 +1338,8 @@ export default function LoansPage() {
               page: 1,
               page_size: 20,
               ordering: '-disburse_time',
-              current_month_only: false
+              current_month_only: false,
+              cumulative_balance_gt_zero: true
             });
           }}>
             Reset
