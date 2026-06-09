@@ -183,6 +183,12 @@ export default function AllCallLogsPage() {
         placeholder: 'Filter by outcome'
       }
     },
+       {
+      id: 'notes',
+      label: 'Comments/Notes',
+      accessor: (row: CallLog) => row.notes,
+      width: 100,
+    },
     {
       id: 'duration',
       label: 'Duration',

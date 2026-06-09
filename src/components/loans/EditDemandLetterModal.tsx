@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, X } from 'lucide-react';
+import { Loader2, X, Plus, Trash2, Calendar } from 'lucide-react';
 
 interface EditDemandLetterModalProps {
   isOpen: boolean;
@@ -27,6 +27,7 @@ interface EditDemandLetterModalProps {
       monthly_installment: number;
       payment_due_day: string;
       first_payment_due_date: string;
+      manual_due_dates?: string[]; // Add manual due dates field
     };
     reference: string;
   };
@@ -49,8 +50,11 @@ export default function EditDemandLetterModal({
     phone: letterData?.customer?.phone || '',
     email: letterData?.customer?.email || '',
     amount_due: letterData?.loan_info?.amount_due || 0,
-    reference: letterData?.reference || ''
+    reference: letterData?.reference || '',
+    manual_due_dates: letterData?.loan_info?.manual_due_dates || []
   });
+
+  const [newDueDate, setNewDueDate] = useState('');
 
   if (!isOpen) return null;
 
@@ -61,9 +65,38 @@ export default function EditDemandLetterModal({
     });
   };
 
+  const handleAddDueDate = () => {
+    if (newDueDate && !formData.manual_due_dates.includes(newDueDate)) {
+      setFormData({
+        ...formData,
+        manual_due_dates: [...formData.manual_due_dates, newDueDate]
+      });
+      setNewDueDate('');
+    }
+  };
+
+  const handleRemoveDueDate = (dateToRemove: string) => {
+    setFormData({
+      ...formData,
+      manual_due_dates: formData.manual_due_dates.filter(date => date !== dateToRemove)
+    });
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddDueDate();
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(formData);
+  };
+
+  // Format date for display (assuming format is "DD Month YYYY" like "19 April 2026")
+  const formatDateForDisplay = (dateStr: string) => {
+    return dateStr;
   };
 
   return (
@@ -170,10 +203,84 @@ export default function EditDemandLetterModal({
             </div>
           </div>
 
+          {/* Installment Due Dates Section */}
+          <div className="border rounded-lg p-4 bg-gray-50">
+            <Label className="text-base font-semibold mb-2 block">
+              Installment Due Dates
+            </Label>
+            
+            {/* Display first payment due date (read-only) */}
+            <div className="mb-3">
+              <Label className="text-sm text-gray-600">First Payment Due Date (from system)</Label>
+              <Input
+                value={letterData?.loan_info?.first_payment_due_date || 'N/A'}
+                disabled
+                className="bg-gray-100"
+              />
+            </div>
+
+            {/* Manual due dates list */}
+            <div className="mb-3">
+              <Label className="text-sm text-gray-600 mb-2 block">
+                Additional Overdue Installment Dates
+                <span className="text-xs text-gray-500 ml-2">(Optional - add multiple dates)</span>
+              </Label>
+              
+              {/* List of manual due dates */}
+              {formData.manual_due_dates.length > 0 ? (
+                <div className="space-y-2 mb-3">
+                  {formData.manual_due_dates.map((date, index) => (
+                    <div key={index} className="flex items-center justify-between bg-white border rounded-lg p-2">
+                      <div className="flex items-center space-x-2">
+                        <Calendar size={16} className="text-gray-500" />
+                        <span className="text-sm">{formatDateForDisplay(date)}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveDueDate(date)}
+                        className="text-red-600 hover:text-red-700"
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500 mb-3">No additional due dates added</p>
+              )}
+
+              {/* Add new due date */}
+              <div className="flex items-center space-x-2">
+                <Input
+                  type="text"
+                  placeholder="Enter date (e.g., 19 April 2026)"
+                  value={newDueDate}
+                  onChange={(e) => setNewDueDate(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleAddDueDate}
+                  disabled={!newDueDate}
+                >
+                  <Plus size={16} className="mr-1" />
+                  Add
+                </Button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Format example: 19 April 2026, 20 May 2026. These dates will appear in the demand letter.
+              </p>
+            </div>
+          </div>
+
           <div className="bg-blue-50 p-3 rounded-lg">
             <p className="text-sm text-blue-800">
               <strong>Note:</strong> Loan information like principal amount, loan date, 
-              and installment details cannot be edited here. Please contact admin if 
+              and monthly installment details cannot be edited here. Please contact admin if 
               corrections are needed.
             </p>
           </div>

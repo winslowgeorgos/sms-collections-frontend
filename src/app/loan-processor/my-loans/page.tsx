@@ -69,7 +69,7 @@ export default function MyLoansPage() {
   const [data, setData] = useState<MyLoansResponse>({
     count: 0,
     page: 1,
-    page_size: 20,
+    page_size: 500,
     total_pages: 1,
     results: []
   });
@@ -123,7 +123,7 @@ export default function MyLoansPage() {
       
       const params = new URLSearchParams({
         page: page.toString(),
-        page_size: '20'
+        page_size: '500'
       });
       
       if (searchTerm) params.append('search', searchTerm);

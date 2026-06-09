@@ -400,6 +400,24 @@ export default function AssignedLoansPage() {
       width: 140,
       sortable: true,
     },
+       {
+      id: 'current_month_total_due',
+      label: 'Cumulative Balance',
+      accessor: (row: AssignedLoan) => row.current_month_total_due,
+      Cell: (value: string) => {
+
+        const outstanding = parseFloat(value);        
+        return (
+          <div>
+            <span className={outstanding > 0 ? 'text-gray-600 font-medium' : 'text-gray-600'}>
+              KSh {outstanding.toLocaleString()}
+            </span>
+          </div>
+        );
+      },
+      width: 130,
+      sortable: true,
+    },
     {
       id: 'due_date',
       label: 'Due Date',
