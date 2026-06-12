@@ -628,7 +628,7 @@ export default function MyLoansPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
+        {/* <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
               <div>
@@ -642,7 +642,7 @@ export default function MyLoansPage() {
               </div>
             </div>
           </CardContent>
-        </Card>
+        </Card> */}
       </div>
 
       {/* Advanced Filters Modal */}
