@@ -1,3 +1,4 @@
+// app/loan-processor/my-loans/page.tsx
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -13,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Modal } from '@/components/ui/modal';
 import { apiClient } from '@/lib/api';
 import { MyLoan } from '@/types/index';
 import { 
@@ -22,7 +24,8 @@ import {
   CalendarRange, TrendingUp, DollarSign, Users,
   Info, Plus, Minus, CalendarDays, Gavel, 
   ShieldAlert, Car, Scale, Ban, Briefcase,
-  FileText, Flag, AlertTriangle
+  FileText, Flag, AlertTriangle, Send, 
+  UserCheck, Building, Home, ClipboardList
 } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -55,15 +58,12 @@ interface FilterState {
   disburse_date_after?: string;
   disburse_date_before?: string;
   current_month_only?: string;
-  // Call log filters
   call_log_created_after?: string;
   call_log_created_before?: string;
   without_call_log_created_after?: string;
   without_call_log_created_before?: string;
-  // Current installment due date
   current_installment_due_date_start?: string;
   current_installment_due_date_end?: string;
-  // Escalation/Repossession filters
   cumulative_balance_gt_zero?: string;
   actual_repossessed?: string;
   auto_escalated_after?: string;
@@ -83,6 +83,30 @@ interface FilterState {
   ordering?: string;
   page_size?: string;
 }
+
+// Escalation Request Interface
+interface EscalationRequest {
+  loan_id: string;
+  installment_id?: number;
+  to_repossess: boolean;
+  new_collection_condition?: string;
+  reason: string;
+  reason_details: string;
+  request_notes: string;
+  supporting_documents?: string[];
+}
+
+// Escalation Reasons (from models.py)
+const ESCALATION_REASONS = [
+  { value: 'days_overdue', label: 'Days Overdue (21+ days)' },
+  { value: 'customer_unreachable', label: 'Customer Unreachable' },
+  { value: 'payment_default', label: 'Multiple Payment Defaults' },
+  { value: 'asset_risk', label: 'Asset at Risk' },
+  { value: 'customer_request', label: 'Customer Requested Escalation' },
+  { value: 'management_directive', label: 'Management Directive' },
+  { value: 'legal_action', label: 'Legal Action Required' },
+  { value: 'breach_of_contract', label: 'Breach of Contract Terms' },
+];
 
 // Collection condition options based on models.py
 const COLLECTION_CONDITIONS = [
@@ -120,11 +144,24 @@ export default function MyLoansPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
+  const [selectedLoans, setSelectedLoans] = useState<string[]>([]);
+  
+  // Escalation Modal State
+  const [isEscalationModalOpen, setIsEscalationModalOpen] = useState(false);
+  const [isSubmittingEscalation, setIsSubmittingEscalation] = useState(false);
+  const [escalationForm, setEscalationForm] = useState<EscalationRequest>({
+    loan_id: '',
+    to_repossess: false,
+    reason: '',
+    reason_details: '',
+    request_notes: '',
+    supporting_documents: [],
+  });
+  const [escalationErrors, setEscalationErrors] = useState<Record<string, string>>({});
   
   // ============ SET DEFAULT FILTERS HERE ============
-  // Initialize filters with cumulative_balance_gt_zero = 'true'
   const [filters, setFilters] = useState<FilterState>({
-    cumulative_balance_gt_zero: 'true'  // Default filter applied
+    cumulative_balance_gt_zero: 'true'
   });
   
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -149,16 +186,13 @@ export default function MyLoansPage() {
     disburse_date_after: '',
     disburse_date_before: '',
     current_month_only: null as string | null,
-    // Call log filters
     call_log_created_after: '',
     call_log_created_before: '',
     without_call_log_created_after: '',
     without_call_log_created_before: '',
-    // Current installment due date
     current_installment_due_date_start: '',
     current_installment_due_date_end: '',
-    // Escalation/Repossession filters
-    cumulative_balance_gt_zero: 'true',  // Default to true in advanced filters too
+    cumulative_balance_gt_zero: 'true',
     actual_repossessed: null as string | null,
     auto_escalated_after: '',
     auto_escalated_before: '',
@@ -213,6 +247,100 @@ export default function MyLoansPage() {
     window.open(`/loans/${loanId}`, '_blank');
   };
 
+  const handleOpenEscalationModal = (loanId?: string) => {
+    if (selectedLoans.length === 0 && !loanId) {
+      alert('Please select at least one loan to escalate');
+      return;
+    }
+    
+    // Reset form
+    setEscalationForm({
+      loan_id: loanId || (selectedLoans.length === 1 ? selectedLoans[0] : ''),
+      installment_id: undefined,
+      to_repossess: false,
+      reason: '',
+      reason_details: '',
+      request_notes: '',
+      supporting_documents: [],
+    });
+    setEscalationErrors({});
+    setIsEscalationModalOpen(true);
+  };
+
+  const handleSubmitEscalation = async () => {
+    // Validate form
+    const errors: Record<string, string> = {};
+    if (!escalationForm.reason) {
+      errors.reason = 'Please select a reason for escalation';
+    }
+    if (!escalationForm.reason_details) {
+      errors.reason_details = 'Please provide details about the escalation reason';
+    }
+    
+    if (Object.keys(errors).length > 0) {
+      setEscalationErrors(errors);
+      return;
+    }
+    
+    setIsSubmittingEscalation(true);
+    
+    try {
+      const client = apiClient.getClient();
+      
+      // If multiple loans selected, send bulk escalation requests
+      const loansToEscalate = escalationForm.loan_id 
+        ? [escalationForm.loan_id] 
+        : selectedLoans;
+      
+      const results = [];
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const loanId of loansToEscalate) {
+        try {
+          const payload = {
+            loan_id: loanId,
+            to_repossess: escalationForm.to_repossess,
+            new_collection_condition: escalationForm.new_collection_condition,
+            reason: escalationForm.reason,
+            reason_details: escalationForm.reason_details,
+            request_notes: escalationForm.request_notes,
+            supporting_documents: escalationForm.supporting_documents,
+          };
+          
+          const response = await client.post('/loan-processor/escalation/request/', payload);
+          results.push({ loanId, success: true, data: response.data });
+          successCount++;
+        } catch (error: any) {
+          results.push({ loanId, success: false, error: error.response?.data?.error || error.message });
+          failCount++;
+        }
+      }
+      
+      setIsEscalationModalOpen(false);
+      setSelectedLoans([]);
+      
+      // Show summary
+      if (successCount > 0) {
+        alert(
+          `Escalation request${successCount > 1 ? 's' : ''} submitted successfully!\n\n` +
+          `Successful: ${successCount}\n` +
+          `Failed: ${failCount}\n\n` +
+          `Your request${successCount > 1 ? 's have' : ' has'} been sent for approval.`
+        );
+        await fetchMyLoans();
+      } else {
+        alert(`Failed to submit escalation request. Please try again.`);
+      }
+      
+    } catch (error) {
+      console.error('Error submitting escalation:', error);
+      alert('Failed to submit escalation request. Please try again.');
+    } finally {
+      setIsSubmittingEscalation(false);
+    }
+  };
+
   const handleServerFilterChange = (newFilters: Record<string, any>) => {
     const apiFilters: FilterState = {};
     
@@ -258,7 +386,6 @@ export default function MyLoansPage() {
   };
 
   const clearFilters = () => {
-    // Reset to default filter (cumulative_balance_gt_zero = true)
     setFilters({ cumulative_balance_gt_zero: 'true' });
     setSearchTerm('');
     setPage(1);
@@ -305,6 +432,7 @@ export default function MyLoansPage() {
       to_repossess: null,
       ordering: '-disburse_time',
     });
+    setSelectedLoans([]);
   };
 
   const applyAdvancedFilters = () => {
@@ -473,10 +601,40 @@ export default function MyLoansPage() {
       filter: { type: 'date_range' as const, placeholder: 'Due date' }
     },
     {
+      id: 'collection_condition',
+      label: 'Collection Condition',
+      accessor: (row: MyLoan) => row.collection_condition_display || 'Collectable',
+      Cell: (value: string) => {
+        let variant: 'outline' | 'secondary' | 'warning' | 'error' | 'success' = 'secondary';
+        if (value.includes('Yard') || value.includes('Auction')) variant = 'warning';
+        if (value.includes('Police') || value.includes('Court')) variant = 'error';
+        if (value.includes('Settled') || value.includes('Written Off')) variant='outline';
+        return <Badge variant={variant}>{value}</Badge>;
+      },
+      width: 160,
+    },
+    {
+      id: 'to_repossess',
+      label: 'Repossession',
+      accessor: (row: MyLoan) => row.to_repossess,
+      Cell: (value: boolean) => (
+        value ? (
+          <Badge variant="error" className="gap-1">
+            <Gavel size={12} /> Marked
+          </Badge>
+        ) : (
+          <Badge variant="secondary" className="gap-1">
+            <CheckCircle size={12} /> Not Marked
+          </Badge>
+        )
+      ),
+      width: 120,
+    },
+    {
       id: 'status',
       label: 'Status',
       accessor: (row: MyLoan) => {
-        const isOverdue = row.current_month_installment_due_date  ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment=== true : false;
+        const isOverdue = row.current_month_installment_due_date ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment === true : false;
         const hasOutstanding = parseFloat(row.current_month_total_due) > 0;
         if (row.has_current_month_installment === false) return 'Undue';
         if (hasOutstanding && isOverdue) return 'Overdue';
@@ -484,7 +642,7 @@ export default function MyLoansPage() {
         return 'Paid';
       },
       Cell: (value: string, row: MyLoan) => {
-        const isOverdue = row.current_month_installment_due_date  ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment=== true : false;
+        const isOverdue = row.current_month_installment_due_date ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment === true : false;
         const hasOutstanding = parseFloat(row.current_month_total_due) > 0;
         if(row.has_current_month_installment === false) {
           return (
@@ -568,9 +726,22 @@ export default function MyLoansPage() {
               <TooltipContent>Log a call</TooltipContent>
             </Tooltip>
           </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => handleOpenEscalationModal(row.loan_id)}
+                  className="text-red-600 hover:text-red-800 transition-colors p-1.5 rounded-full hover:bg-red-50"
+                >
+                  <Flag size={16} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Escalate loan</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       ),
-      width: 100,
+      width: 120,
     },
   ];
 
@@ -580,7 +751,8 @@ export default function MyLoansPage() {
   const collectionRate = totalAmount === 0 ? 0 : (collectedAmount / totalAmount) * 100;
   const overdueLoans = data.results.filter(loan => loan.is_overdue_status && parseFloat(loan.total_outstanding || '0') > 0).length;
   const paidLoans = data.results.filter(loan => parseFloat(loan.total_outstanding || '0') === 0).length;
-  const repossessedLoans = 0
+  const repossessedLoans = data.results.filter(loan => loan.actual_repossessed === true).length;
+  const escalatedLoans = data.results.filter(loan => loan.auto_escalated_at !== null).length;
 
   return (
     <div className="space-y-6 p-4 md:p-6 bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
@@ -593,6 +765,15 @@ export default function MyLoansPage() {
           <p className="text-gray-600 mt-1">Track and manage loans assigned to you for collection</p>
         </div>
         <div className="flex space-x-3">
+          {selectedLoans.length > 0 && (
+            <Button 
+              onClick={() => handleOpenEscalationModal()}
+              className="bg-red-600 hover:bg-red-700 shadow-sm hover:shadow transition-all"
+            >
+              <Flag size={18} className="mr-2" />
+              Escalate Selected ({selectedLoans.length})
+            </Button>
+          )}
           <Button 
             variant="outline" 
             onClick={() => setShowAdvancedFilters(true)}
@@ -614,7 +795,7 @@ export default function MyLoansPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-5">
         <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
@@ -628,7 +809,7 @@ export default function MyLoansPage() {
             </div>
           </CardContent>
         </Card>
-        {/* <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
+        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
               <div>
@@ -642,8 +823,232 @@ export default function MyLoansPage() {
               </div>
             </div>
           </CardContent>
-        </Card> */}
+        </Card>
+        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 font-medium">Overdue Loans</p>
+                <p className="text-3xl font-bold text-red-600 mt-1">{overdueLoans}</p>
+              </div>
+              <div className="bg-red-100 p-3 rounded-full">
+                <AlertCircle className="h-6 w-6 text-red-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 font-medium">Collection Rate</p>
+                <p className="text-3xl font-bold text-green-600 mt-1">{collectionRate.toFixed(1)}%</p>
+              </div>
+              <div className="bg-green-100 p-3 rounded-full">
+                <TrendingUp className="h-6 w-6 text-green-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 font-medium">Repossessed</p>
+                <p className="text-3xl font-bold text-purple-600 mt-1">{repossessedLoans}</p>
+              </div>
+              <div className="bg-purple-100 p-3 rounded-full">
+                <Gavel className="h-6 w-6 text-purple-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 font-medium">Escalated</p>
+                <p className="text-3xl font-bold text-orange-600 mt-1">{escalatedLoans}</p>
+              </div>
+              <div className="bg-orange-100 p-3 rounded-full">
+                <Flag className="h-6 w-6 text-orange-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Escalation Modal */}
+      <Modal
+        isOpen={isEscalationModalOpen}
+        onClose={() => setIsEscalationModalOpen(false)}
+        title="Escalate Loan(s)"
+        size="lg"
+      >
+        <div className="space-y-6 max-h-[80vh] overflow-y-auto px-1">
+          {/* Selected Loans Info */}
+          <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+            <div className="flex items-center gap-2 text-blue-800 mb-2">
+              <ClipboardList size={18} />
+              <span className="font-medium">Selected Loans</span>
+            </div>
+            <div className="text-sm text-blue-700">
+              {escalationForm.loan_id 
+                ? `Loan ID: ${escalationForm.loan_id}`
+                : `${selectedLoans.length} loan(s) selected for escalation`}
+            </div>
+            {selectedLoans.length > 1 && !escalationForm.loan_id && (
+              <div className="text-xs text-blue-600 mt-1">
+                {selectedLoans.slice(0, 3).join(', ')}
+                {selectedLoans.length > 3 && ` +${selectedLoans.length - 3} more`}
+              </div>
+            )}
+          </div>
+
+          {/* Repossession Option */}
+          <div>
+            <Label className="flex items-center gap-2 mb-2">
+              <Gavel size={16} />
+              Repossession Request
+            </Label>
+            <div className="flex items-center space-x-4">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="radio"
+                  checked={!escalationForm.to_repossess}
+                  onChange={() => setEscalationForm({...escalationForm, to_repossess: false})}
+                  className="w-4 h-4 text-blue-600"
+                />
+                <span>No</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="radio"
+                  checked={escalationForm.to_repossess}
+                  onChange={() => setEscalationForm({...escalationForm, to_repossess: true})}
+                  className="w-4 h-4 text-red-600"
+                />
+                <span className="text-red-600">Yes - Mark for Repossession</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Collection Condition Change */}
+          <div>
+            <Label className="flex items-center gap-2 mb-2">
+              <ShieldAlert size={16} />
+              Change Collection Condition (Optional)
+            </Label>
+            <Select
+              value={escalationForm.new_collection_condition}
+              onValueChange={(value) => setEscalationForm({...escalationForm, new_collection_condition: value})}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select new collection condition (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {COLLECTION_CONDITIONS.map(condition => (
+                  <SelectItem key={condition.value} value={condition.value}>
+                    {condition.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Escalation Reason */}
+          <div>
+            <Label className="flex items-center gap-2 mb-2">
+              <AlertTriangle size={16} />
+              Escalation Reason <span className="text-red-500">*</span>
+            </Label>
+            <Select
+              value={escalationForm.reason}
+              onValueChange={(value) => setEscalationForm({...escalationForm, reason: value})}
+            >
+              <SelectTrigger className={escalationErrors.reason ? 'border-red-500' : ''}>
+                <SelectValue placeholder="Select reason for escalation" />
+              </SelectTrigger>
+              <SelectContent>
+                {ESCALATION_REASONS.map(reason => (
+                  <SelectItem key={reason.value} value={reason.value}>
+                    {reason.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {escalationErrors.reason && (
+              <p className="text-red-500 text-sm mt-1">{escalationErrors.reason}</p>
+            )}
+          </div>
+
+          {/* Reason Details */}
+          <div>
+            <Label className="flex items-center gap-2 mb-2">
+              <FileText size={16} />
+              Reason Details <span className="text-red-500">*</span>
+            </Label>
+            <textarea
+              value={escalationForm.reason_details}
+              onChange={(e) => setEscalationForm({...escalationForm, reason_details: e.target.value})}
+              placeholder="Provide detailed explanation of why this loan needs escalation..."
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px] ${escalationErrors.reason_details ? 'border-red-500' : 'border-gray-300'}`}
+            />
+            {escalationErrors.reason_details && (
+              <p className="text-red-500 text-sm mt-1">{escalationErrors.reason_details}</p>
+            )}
+          </div>
+
+          {/* Request Notes */}
+          <div>
+            <Label className="flex items-center gap-2 mb-2">
+              <Info size={16} />
+              Additional Notes (Optional)
+            </Label>
+            <textarea
+              value={escalationForm.request_notes}
+              onChange={(e) => setEscalationForm({...escalationForm, request_notes: e.target.value})}
+              placeholder="Any additional information that might help the approver..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]"
+            />
+          </div>
+
+          {/* Info Box */}
+          <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+            <p className="text-sm text-yellow-800 flex items-start gap-2">
+              <Info size={16} className="mt-0.5 flex-shrink-0" />
+              <span>
+                Escalation requests require approval from a manager or admin. 
+                Once approved, the request will be executed automatically.
+                {escalationForm.to_repossess && " Marking for repossession will trigger the repossession process."}
+              </span>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex justify-end space-x-3 pt-6 border-t mt-4">
+          <Button variant="outline" onClick={() => setIsEscalationModalOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSubmitEscalation} 
+            disabled={isSubmittingEscalation}
+            className="bg-red-600 hover:bg-red-700"
+          >
+            {isSubmittingEscalation ? (
+              <>
+                <RefreshCw size={16} className="mr-2 animate-spin" />
+                Submitting...
+              </>
+            ) : (
+              <>
+                <Send size={16} className="mr-2" />
+                Submit Escalation Request
+              </>
+            )}
+          </Button>
+        </div>
+      </Modal>
 
       {/* Advanced Filters Modal */}
       {showAdvancedFilters && (
@@ -1201,6 +1606,7 @@ export default function MyLoansPage() {
                       <SelectItem value="assigned_at">Oldest Assigned</SelectItem>
                       <SelectItem value="-to_repossess">Repossession Marked First</SelectItem>
                       <SelectItem value="-auto_escalated_at">Auto Escalated First</SelectItem>
+                      <SelectItem value="-collection_condition">Collection Condition (A-Z)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1324,7 +1730,14 @@ export default function MyLoansPage() {
         <CardHeader className="bg-white border-b px-6 py-4">
           <div className="flex items-center justify-between w-full">
             <h2 className="text-xl font-semibold text-gray-800">Loan Assignments</h2>
-            {isLoading && <RefreshCw size={18} className="animate-spin text-gray-400" />}
+            <div className="flex items-center gap-3">
+              {selectedLoans.length > 0 && (
+                <Badge variant="modern" className="bg-blue-100 text-blue-800">
+                  {selectedLoans.length} selected
+                </Badge>
+              )}
+              {isLoading && <RefreshCw size={18} className="animate-spin text-gray-400" />}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -1332,7 +1745,10 @@ export default function MyLoansPage() {
             data={data.results}
             columns={columns}
             rowKey={(row: MyLoan) => row.id}
-            selectionMode="none"
+            selectionMode="multiple"
+            onSelectionChange={(selectedRows) => {
+              setSelectedLoans(selectedRows.map((row: MyLoan) => row.loan_id));
+            }}
             virtualized={true}
             pagination={{
               totalCount: data.count,
