@@ -13,6 +13,7 @@ import {
   Megaphone
 } from 'lucide-react';
 
+
 export default function DashboardPage() {
   const [stats, setStats] = useState({
     totalTemplates: 0,

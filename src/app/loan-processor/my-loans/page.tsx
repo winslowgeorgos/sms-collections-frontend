@@ -809,47 +809,8 @@ export default function MyLoansPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500 font-medium">Total Outstanding</p>
-                <p className="text-2xl font-bold text-gray-800 mt-1">
-                  KSh {totalOutstanding.toLocaleString()}
-                </p>
-              </div>
-              <div className="bg-amber-100 p-3 rounded-full">
-                <DollarSign className="h-6 w-6 text-amber-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500 font-medium">Overdue Loans</p>
-                <p className="text-3xl font-bold text-red-600 mt-1">{overdueLoans}</p>
-              </div>
-              <div className="bg-red-100 p-3 rounded-full">
-                <AlertCircle className="h-6 w-6 text-red-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500 font-medium">Collection Rate</p>
-                <p className="text-3xl font-bold text-green-600 mt-1">{collectionRate.toFixed(1)}%</p>
-              </div>
-              <div className="bg-green-100 p-3 rounded-full">
-                <TrendingUp className="h-6 w-6 text-green-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+
+ 
         <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
