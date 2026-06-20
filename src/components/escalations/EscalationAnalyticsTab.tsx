@@ -1026,6 +1026,15 @@ export default function EscalationAnalyticsTab() {
             <List size={16} className="mr-2" />
             Escalation Lists
           </Button>
+
+            <Button 
+            variant="outline" 
+            onClick={() => window.location.href = '/yard'}
+            className="border-purple-300 text-purple-700 hover:bg-purple-50"
+          >
+            <List size={16} className="mr-2" />
+            Yard Management
+          </Button>
           
           <ActionGuard requirement="can_export_data" fallback={null}>
             <Button variant="outline" onClick={() => setIsExportModalOpen(true)}>

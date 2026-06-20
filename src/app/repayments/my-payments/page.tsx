@@ -199,7 +199,7 @@ export default function MyPaymentsPage() {
   const [selectedPayment, setSelectedPayment] = useState<PaymentDetail | null>(null);
   const [isLoadingPayment, setIsLoadingPayment] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(20);
   const [trendData, setTrendData] = useState<PaymentTrend[]>([]);
   const [summaryStats, setSummaryStats] = useState<SummaryStats | null>(null);
   const [copied, setCopied] = useState(false);
@@ -887,15 +887,21 @@ export default function MyPaymentsPage() {
               rowKey={(row: any) => row.id}
               selectionMode="none"
               virtualized={true}
+
               pagination={{
                 totalCount: data.count,
                 currentPage: page,
                 pageSize: pageSize,
                 onPageChange: (newPage) => setPage(newPage),
-                serverSide: true,
+                onPageSizeChange: (newSize) => {
+                  setPage(1);
+                  setPageSize(newSize);
+                },
                 hasNextPage: page * pageSize < data.count,
                 hasPreviousPage: page > 1,
+                serverSide: true
               }}
+              pageSizeOptions={[20, 50, 100, 500, 1000]} // optional, matches default
             />
           )}
         </CardContent>

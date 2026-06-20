@@ -21,12 +21,14 @@ import * as XLSX from "xlsx";
  *   virtualization (@tanstack/react-virtual), CSV/XLSX export, pagination fallback.
  * - Now supports both client-side and server-side pagination and filtering
  * - Text wraps by default instead of truncating
+ * - Supports per_page/page_size dropdown selection
  *
  * Usage notes:
  * - Pass `columns` array with optional `filter` config for per-column filters.
  * - Use `Cell` to provide custom cell renderers.
  * - For server-side pagination, pass `pagination` prop with serverSide: true
  * - For server-side search/filtering, pass serverSideSearch and serverSideFilters props
+ * - Use `pageSizeOptions` to customize the dropdown options for page size
  */
 
 // -----------------------------
@@ -59,6 +61,7 @@ type PaginationProps = {
   currentPage: number;
   pageSize: number;
   onPageChange?: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void; // New callback for page size changes
   hasNextPage?: boolean;
   hasPreviousPage?: boolean;
   serverSide?: boolean; // If true, uses server-side pagination
@@ -85,7 +88,12 @@ type GenericTableProps<T> = {
   onServerFilterChange?: (filters: Record<string, any>) => void;
   // Text wrapping control
   wrapText?: boolean; // Global override for text wrapping
+  // Page size options for dropdown
+  pageSizeOptions?: number[];
 };
+
+// Default page size options
+const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250];
 
 // -----------------------------
 // Helpers
@@ -129,6 +137,7 @@ export default function GenericTable<T extends Record<string, any>>({
   serverSideFilters = {},
   onServerFilterChange,
   wrapText: globalWrapText = true, // Default to true for text wrapping
+  pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
 }: GenericTableProps<T>) {
   // Columns & widths state (keep them in sync)
   const [columns, setColumns] = useState<ColumnDef<T>[]>(
@@ -164,6 +173,9 @@ export default function GenericTable<T extends Record<string, any>>({
 
   // pagination (used when not virtualized or for client-side pagination)
   const [page, setPage] = useState(pagination?.currentPage || 1);
+  
+  // Local page size state (used when not server-side pagination)
+  const [localPageSize, setLocalPageSize] = useState(pageSize);
 
   // selection - now using stable IDs instead of indices
   const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
@@ -184,7 +196,21 @@ export default function GenericTable<T extends Record<string, any>>({
   
   // Use page from pagination prop if available and server-side
   const currentPage = isServerSidePagination ? (pagination?.currentPage || 1) : page;
-  const effectivePageSize = pagination?.pageSize || pageSize;
+  const effectivePageSize = isServerSidePagination 
+    ? (pagination?.pageSize || pageSize) 
+    : localPageSize;
+
+  // Handle page size changes
+  const handlePageSizeChange = (newPageSize: number) => {
+    if (isServerSidePagination && pagination?.onPageSizeChange) {
+      // Server-side pagination: call the callback
+      pagination.onPageSizeChange(newPageSize);
+    } else {
+      // Client-side pagination: update local state and reset to first page
+      setLocalPageSize(newPageSize);
+      setPage(1);
+    }
+  };
 
   // Handle filter changes - send to server if server-side filtering is enabled
   const handleFilterChange = (filterId: string, value: any) => {
@@ -919,40 +945,60 @@ export default function GenericTable<T extends Record<string, any>>({
 
       {/* Footer / pagination */}
       {showPagination && (
-        <div className="px-3 py-2 flex items-center justify-between border-t border-gray-100">
+        <div className="px-3 py-2 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100">
           <div className="text-xs text-gray-600">
             {isServerSidePagination
               ? `Showing ${((currentPage - 1) * effectivePageSize) + 1} - ${Math.min(currentPage * effectivePageSize, total)} of ${total}`
               : `Showing ${((currentPage - 1) * effectivePageSize) + 1} - ${Math.min(currentPage * effectivePageSize, total)} of ${total}`
             }
           </div>
-          <div className="flex items-center gap-2">
-            <button 
-              disabled={currentPage <= 1 || (isServerSidePagination && !pagination?.hasPreviousPage)} 
-              onClick={() => handlePageChange(currentPage - 1)} 
-              className="px-2 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Prev
-            </button>
-            <span className="text-xs">Page</span>
-            <input 
-              className="w-12 text-center border rounded" 
-              value={currentPage} 
-              onChange={(e) => {
-                const newPage = Number(e.target.value || 1);
-                if (newPage >= 1 && newPage <= totalPages) {
-                  handlePageChange(newPage);
-                }
-              }} 
-            />
-            <span className="text-xs">of {totalPages}</span>
-            <button 
-              disabled={currentPage >= totalPages || (isServerSidePagination && !pagination?.hasNextPage)} 
-              onClick={() => handlePageChange(currentPage + 1)} 
-              className="px-2 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Next
-            </button>
+          
+          <div className="flex items-center gap-4">
+            {/* Page size dropdown */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-600 whitespace-nowrap">Rows per page:</label>
+              <select
+                value={effectivePageSize}
+                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                className="px-2 py-1 text-xs border rounded bg-white dark:bg-gray-800 dark:border-gray-700"
+              >
+                {pageSizeOptions.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Page navigation */}
+            <div className="flex items-center gap-2">
+              <button 
+                disabled={currentPage <= 1 || (isServerSidePagination && !pagination?.hasPreviousPage)} 
+                onClick={() => handlePageChange(currentPage - 1)} 
+                className="px-2 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Prev
+              </button>
+              <span className="text-xs">Page</span>
+              <input 
+                className="w-12 text-center border rounded" 
+                value={currentPage} 
+                onChange={(e) => {
+                  const newPage = Number(e.target.value || 1);
+                  if (newPage >= 1 && newPage <= totalPages) {
+                    handlePageChange(newPage);
+                  }
+                }} 
+              />
+              <span className="text-xs">of {totalPages}</span>
+              <button 
+                disabled={currentPage >= totalPages || (isServerSidePagination && !pagination?.hasNextPage)} 
+                onClick={() => handlePageChange(currentPage + 1)} 
+                className="px-2 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       )}

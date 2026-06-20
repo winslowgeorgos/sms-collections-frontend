@@ -9,7 +9,9 @@ import {
   ArrowLeft, User, Calendar, Clock, DollarSign,
   TrendingUp, Target, Award, Activity,
   AlertCircle, CheckCircle, XCircle, BarChart3,
-  RefreshCw, Download, Eye, Phone, Mail, HelpCircle
+  RefreshCw, Download, Eye, Phone, Mail, HelpCircle,
+  List,
+  ExternalLink
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -446,6 +448,27 @@ export default function OfficerAnalyticsPage() {
             <p className="text-gray-600">Officer ID: {officerId} | As of {new Date().toLocaleDateString()}</p>
           </div>
         </div>
+         <div className="flex space-x-2">
+                  {/* NEW: Escalation Portal Button */}
+                  <Button 
+                    variant="outline" 
+                    onClick={() => window.location.href = '/escalation_portal'}
+                    className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                  >
+                    <ExternalLink size={16} className="mr-2" />
+                    Escalation Portal
+                  </Button>
+                  
+                  {/* NEW: Escalation Lists Button */}
+                  <Button 
+                    variant="outline" 
+                    onClick={() => window.location.href = '/escalation_portal/list'}
+                    className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                  >
+                    <List size={16} className="mr-2" />
+                    Escalation Lists
+                  </Button>
+                </div>
         <Button variant="outline" onClick={fetchAllData}>
           <RefreshCw size={20} className="mr-2" />
           Refresh

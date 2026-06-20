@@ -92,13 +92,29 @@ import {
   Ban,
   TrendingUp,
   ClipboardList,
-  Send as SendIcon
+  Send as SendIcon,
+  Car as CarIcon,
+  Phone as PhoneIcon,
+  Hash,
+  UserCircle,
+  Warehouse,
+  MapPin as MapPinIcon
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 // ============================================================================
 // TYPES
 // ============================================================================
+
+interface YardLocation {
+  id: number;
+  name: string;
+  location: string;
+  contact_phone: string | null;
+  contact_person: string | null;
+  notes: string | null;
+  is_active: boolean;
+}
 
 interface EscalatedLoan {
   id: string;
@@ -110,10 +126,19 @@ interface EscalatedLoan {
   days_overdue: number;
   to_repossess: boolean;
   repossession_status: string;
+  repossession_status_display: string;
   collection_condition: string;
+  collection_condition_display: string;
   assigned_officer: string | null;
+  assigned_officer_id: string | null;
   escalation_date: string | null;
   is_auto_escalated: boolean;
+  total_outstanding: number;
+  total_amount: number;
+  yard_location: string | null;
+  yard_location_id: string | null;
+  yard_notes: string | null;
+  yard_entered_at: string | null;
 }
 
 interface EscalationRequest {
@@ -123,7 +148,9 @@ interface EscalationRequest {
   escalation_type: string;
   to_repossess: boolean;
   new_repossession_status: string | null;
+  new_repossession_status_display: string | null;
   new_collection_condition: string | null;
+  new_collection_condition_display: string | null;
   reason: string;
   reason_details: string;
   status: string;
@@ -134,6 +161,9 @@ interface EscalationRequest {
   review_notes: string | null;
   executed_by: string | null;
   executed_at: string | null;
+  yard_location: string | null;
+  yard_notes: string | null;
+  yard_display: string | null;
 }
 
 interface EscalationStats {
@@ -143,8 +173,20 @@ interface EscalationStats {
   repossessed: number;
   released: number;
   court_ordered: number;
+  in_yard: number;
   total_cumulative_balance: number;
   avg_days_overdue: number;
+}
+
+interface EscalatedLoansResponse {
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  summary: EscalationStats;
+  loans: EscalatedLoan[];
+  has_next: boolean;
+  has_previous: boolean;
 }
 
 // ============================================================================
@@ -252,6 +294,25 @@ const CollectionConditionBadge = ({ condition }: { condition: string }) => {
   );
 };
 
+// Yard Badge Component - Shows yard info with icon
+const YardBadge = ({ yardLocation, yardNotes }: { yardLocation: string | null; yardNotes?: string | null }) => {
+  if (!yardLocation) {
+    return <span className="text-xs text-gray-400">No yard assigned</span>;
+  }
+  
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+        <Warehouse size={12} className="mr-1" />
+        {yardLocation}
+      </span>
+      {yardNotes && (
+        <span className="text-xs text-gray-500 truncate max-w-[150px]">{yardNotes}</span>
+      )}
+    </div>
+  );
+};
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -276,9 +337,14 @@ export default function EscalationManagementPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   
+  // Yard locations for dropdown
+  const [yardLocations, setYardLocations] = useState<YardLocation[]>([]);
+  const [showYardFields, setShowYardFields] = useState(false);
+  
   // Filters
   const [filters, setFilters] = useState({
     officer_id: '',
+    assigned_officer: '',
     collection_condition: '',
     repossession_status: '',
     min_days_overdue: '',
@@ -287,7 +353,10 @@ export default function EscalationManagementPage() {
     max_balance: '',
     auto_escalated: '',
     to_repossess: '',
-    search: ''
+    search: '',
+    registration_number: '',
+    phone_number: '',
+    yard_filter: '',
   });
   const [showFilters, setShowFilters] = useState(false);
   
@@ -309,7 +378,9 @@ export default function EscalationManagementPage() {
     reason: '',
     reason_details: '',
     request_notes: '',
-    supporting_documents: [] as string[]
+    supporting_documents: [] as string[],
+    yard_location_id: undefined as number | undefined,
+    yard_notes: '',
   });
   
   // Review form data
@@ -329,6 +400,16 @@ export default function EscalationManagementPage() {
   // API CALLS
   // ============================================================================
   
+  const fetchYardLocations = useCallback(async () => {
+    try {
+      const client = apiClient.getClient();
+      const response = await client.get('/loan-processor/yard-locations/?is_active=true');
+      setYardLocations(response.data.results || response.data || []);
+    } catch (error) {
+      console.error('Error fetching yard locations:', error);
+    }
+  }, []);
+  
   const fetchEscalatedLoans = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -336,8 +417,11 @@ export default function EscalationManagementPage() {
       const params = new URLSearchParams();
       
       if (filters.officer_id) params.append('officer_id', filters.officer_id);
+      if (filters.assigned_officer) params.append('assigned_officer', filters.assigned_officer);
       if (filters.collection_condition) params.append('collection_condition', filters.collection_condition);
       if (filters.repossession_status) params.append('repossession_status', filters.repossession_status);
+      if (filters.registration_number) params.append('registration_number', filters.registration_number);
+      if (filters.phone_number) params.append('phone_number', filters.phone_number);
       if (filters.min_days_overdue) params.append('min_days_overdue', filters.min_days_overdue);
       if (filters.max_days_overdue) params.append('max_days_overdue', filters.max_days_overdue);
       if (filters.min_balance) params.append('min_balance', filters.min_balance);
@@ -346,10 +430,17 @@ export default function EscalationManagementPage() {
       if (filters.to_repossess) params.append('to_repossess', filters.to_repossess);
       if (filters.search) params.append('search', filters.search);
       
+      // Yard filter
+      if (filters.yard_filter) {
+        params.append('yard', filters.yard_filter);
+      }
+      
       params.append('page', pagination.page.toString());
       params.append('page_size', pagination.page_size.toString());
       
-      const response = await client.get(`/loan-processor/escalation/escalated-loans/?${params.toString()}`);
+      const response = await client.get<EscalatedLoansResponse>(
+        `/loan-processor/escalation/loans/?${params.toString()}`
+      );
       
       setEscalatedLoans(response.data.loans || []);
       setStats(response.data.summary || null);
@@ -400,6 +491,12 @@ export default function EscalationManagementPage() {
       }
     }
     
+    if (escalationForm.new_collection_condition === 'in_yard') {
+      if (!escalationForm.yard_location_id) {
+        errors.yard_location = 'Please select a yard location when setting collection condition to "In the Yard"';
+      }
+    }
+    
     if (Object.keys(errors).length > 0) {
       setEscalationErrors(errors);
       return;
@@ -424,6 +521,11 @@ export default function EscalationManagementPage() {
       
       if (escalationForm.escalation_type === 'collection' || escalationForm.escalation_type === 'both') {
         payload.new_collection_condition = escalationForm.new_collection_condition;
+        
+        if (escalationForm.new_collection_condition === 'in_yard') {
+          payload.yard_location_id = escalationForm.yard_location_id;
+          payload.yard_notes = escalationForm.yard_notes || '';
+        }
       }
       
       await client.post('/loan-processor/escalation/request/', payload);
@@ -446,7 +548,7 @@ export default function EscalationManagementPage() {
     setIsSubmitting(true);
     try {
       const client = apiClient.getClient();
-      await client.post(`/loan-processor/escalation/request/${selectedRequest.id}/approve/`, {
+      await client.post(`/loan-processor/${selectedRequest.id}/escalation/approve/`, {
         review_notes: reviewForm.review_notes
       });
       alert('Escalation request approved');
@@ -466,7 +568,7 @@ export default function EscalationManagementPage() {
     setIsSubmitting(true);
     try {
       const client = apiClient.getClient();
-      await client.post(`/loan-processor/escalation/request/${selectedRequest.id}/reject/`, {
+      await client.post(`/loan-processor/${selectedRequest.id}/escalation/reject/`, {
         review_notes: reviewForm.review_notes
       });
       alert('Escalation request rejected');
@@ -486,7 +588,7 @@ export default function EscalationManagementPage() {
     setIsSubmitting(true);
     try {
       const client = apiClient.getClient();
-      await client.post(`/loan-processor/escalation/request/${selectedRequest.id}/execute/`);
+      await client.post(`/loan-processor/${selectedRequest.id}/escalation/execute/`);
       alert('Escalation request executed successfully');
       setIsExecuteModalOpen(false);
       fetchEscalationRequests();
@@ -504,7 +606,7 @@ export default function EscalationManagementPage() {
     setIsSubmitting(true);
     try {
       const client = apiClient.getClient();
-      await client.post(`/loan-processor/escalation/request/${selectedRequest.id}/cancel/`, {
+      await client.post(`/loan-processor/${selectedRequest.id}/escalation/cancel/`, {
         reason: cancelForm.reason
       });
       alert('Escalation request cancelled');
@@ -525,7 +627,7 @@ export default function EscalationManagementPage() {
     setIsSubmitting(true);
     try {
       const client = apiClient.getClient();
-      const response = await client.post('/loan-processor/escalation/auto/');
+      const response = await client.post('/loan-processor/escalation/auto-escalate/');
       alert(response.data.message || 'Auto-escalation completed');
       fetchEscalatedLoans();
     } catch (error: any) {
@@ -546,14 +648,18 @@ export default function EscalationManagementPage() {
       reason: '',
       reason_details: '',
       request_notes: '',
-      supporting_documents: []
+      supporting_documents: [],
+      yard_location_id: undefined,
+      yard_notes: '',
     });
     setEscalationErrors({});
+    setShowYardFields(false);
   };
   
   const resetFilters = () => {
     setFilters({
       officer_id: '',
+      assigned_officer: '',
       collection_condition: '',
       repossession_status: '',
       min_days_overdue: '',
@@ -562,12 +668,19 @@ export default function EscalationManagementPage() {
       max_balance: '',
       auto_escalated: '',
       to_repossess: '',
-      search: ''
+      search: '',
+      registration_number: '',
+      phone_number: '',
+      yard_filter: '',
     });
     setPagination(prev => ({ ...prev, page: 1 }));
   };
   
   // Load data on mount and filter changes
+  useEffect(() => {
+    fetchYardLocations();
+  }, [fetchYardLocations]);
+  
   useEffect(() => {
     if (activeTab === 'escalated') {
       fetchEscalatedLoans();
@@ -581,6 +694,17 @@ export default function EscalationManagementPage() {
   const formatNumber = (value: number) => value.toLocaleString();
   const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString();
   const formatDateTime = (dateString: string) => new Date(dateString).toLocaleString();
+  
+  // Get unique yard names from loans for filter dropdown
+  const getUniqueYards = useCallback(() => {
+    const yardSet = new Set<string>();
+    escalatedLoans.forEach(loan => {
+      if (loan.yard_location) {
+        yardSet.add(loan.yard_location);
+      }
+    });
+    return Array.from(yardSet).sort();
+  }, [escalatedLoans]);
   
   // Table columns for escalated loans
   const escalatedLoansColumns = [
@@ -601,11 +725,26 @@ export default function EscalationManagementPage() {
       accessor: (row: EscalatedLoan) => row.customer_name,
       Cell: (value: string, row: EscalatedLoan) => (
         <div>
-          <div className="font-medium">{value}</div>
-          <div className="text-xs text-gray-500">{row.phone_number}</div>
+          <div className="font-medium text-sm">{value}</div>
+          <div className="text-xs text-gray-500 flex items-center gap-1">
+            <PhoneIcon size={10} />
+            {row.phone_number}
+          </div>
         </div>
       ),
       width: 200,
+    },
+    {
+      id: 'registration_number',
+      label: 'Registration',
+      accessor: (row: EscalatedLoan) => row.registration_number || '-',
+      Cell: (value: string) => (
+        <div className="flex items-center gap-1">
+          <CarIcon size={14} className="text-gray-400" />
+          <span className="font-mono text-sm">{value || '-'}</span>
+        </div>
+      ),
+      width: 130,
     },
     {
       id: 'cumulative_balance',
@@ -640,7 +779,14 @@ export default function EscalationManagementPage() {
       id: 'repossession_status',
       label: 'Repossession Status',
       accessor: (row: EscalatedLoan) => row.repossession_status,
-      Cell: (value: string) => <RepossessionStatusBadge status={value} />,
+      Cell: (value: string, row: EscalatedLoan) => (
+        <div>
+          <RepossessionStatusBadge status={value} />
+          {row.is_auto_escalated && (
+            <span className="ml-1 text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Auto</span>
+          )}
+        </div>
+      ),
       width: 160,
       align: 'center' as const,
     },
@@ -648,29 +794,35 @@ export default function EscalationManagementPage() {
       id: 'collection_condition',
       label: 'Collection Condition',
       accessor: (row: EscalatedLoan) => row.collection_condition,
-      Cell: (value: string) => <CollectionConditionBadge condition={value} />,
-      width: 160,
+      Cell: (value: string, row: EscalatedLoan) => (
+        <div className="flex flex-col items-center gap-1">
+          <CollectionConditionBadge condition={value} />
+        </div>
+      ),
+      width: 150,
       align: 'center' as const,
     },
     {
-      id: 'is_auto_escalated',
-      label: 'Auto',
-      accessor: (row: EscalatedLoan) => row.is_auto_escalated,
-      Cell: (value: boolean) => (
-        value ? (
-          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">Auto</span>
-        ) : (
-          <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">Manual</span>
-        )
+      id: 'yard_location',
+      label: 'Yard Location',
+      accessor: (row: EscalatedLoan) => row.yard_location,
+      Cell: (value: string | null, row: EscalatedLoan) => (
+        <YardBadge yardLocation={value} yardNotes={row.yard_notes} />
       ),
-      width: 80,
+      width: 160,
       align: 'center' as const,
     },
     {
       id: 'assigned_officer',
       label: 'Officer',
       accessor: (row: EscalatedLoan) => row.assigned_officer || 'Unassigned',
-      width: 120,
+      Cell: (value: string) => (
+        <div className="flex items-center gap-1">
+          <UserCircle size={14} className="text-gray-400" />
+          <span className="text-sm">{value}</span>
+        </div>
+      ),
+      width: 140,
       align: 'center' as const,
     },
     {
@@ -700,7 +852,14 @@ export default function EscalationManagementPage() {
                     onClick={() => {
                       setSelectedLoan(row);
                       resetEscalationForm();
-                      setEscalationForm(prev => ({ ...prev, loan_id: row.loan_id }));
+                      setEscalationForm(prev => ({ 
+                        ...prev, 
+                        loan_id: row.loan_id,
+                        new_collection_condition: row.collection_condition || ''
+                      }));
+                      if (row.collection_condition === 'in_yard') {
+                        setShowYardFields(true);
+                      }
                       setIsEscalateModalOpen(true);
                     }}
                     className="p-1.5 rounded-full hover:bg-gray-100 text-orange-600"
@@ -741,17 +900,32 @@ export default function EscalationManagementPage() {
       width: 160,
     },
     {
-      id: 'escalation_type',
-      label: 'Type',
-      accessor: (row: EscalationRequest) => row.escalation_type,
-      Cell: (value: string) => {
-        if (value === 'both') return <span className="text-xs text-purple-600">Both</span>;
-        if (value === 'repossess') return <span className="text-xs text-red-600">Repossession</span>;
-        if (value === 'collection') return <span className="text-xs text-blue-600">Condition</span>;
-        return <span className="text-xs">-</span>;
-      },
-      width: 100,
-      align: 'center' as const,
+      id: 'target_changes',
+      label: 'Target Changes',
+      accessor: (row: EscalationRequest) => row,
+      Cell: (value: EscalationRequest, row: EscalationRequest) => (
+        <div className="text-xs space-y-0.5">
+          {row.new_repossession_status && (
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">Repo:</span>
+              <RepossessionStatusBadge status={row.new_repossession_status} />
+            </div>
+          )}
+          {row.new_collection_condition && (
+            <div className="flex items-center gap-1">
+              <span className="text-gray-500">Condition:</span>
+              <CollectionConditionBadge condition={row.new_collection_condition} />
+            </div>
+          )}
+          {row.yard_location && (
+            <div className="flex items-center gap-1 text-blue-600">
+              <Warehouse size={12} />
+              <span className="text-xs truncate max-w-[120px]">{row.yard_location}</span>
+            </div>
+          )}
+        </div>
+      ),
+      width: 200,
     },
     {
       id: 'reason',
@@ -759,13 +933,13 @@ export default function EscalationManagementPage() {
       accessor: (row: EscalationRequest) => row.reason,
       Cell: (value: string, row: EscalationRequest) => (
         <div>
-          <div className="text-sm">{value}</div>
+          <div className="text-sm capitalize">{value?.replace(/_/g, ' ')}</div>
           {row.reason_details && (
             <div className="text-xs text-gray-500 truncate max-w-xs">{row.reason_details}</div>
           )}
         </div>
       ),
-      width: 200,
+      width: 180,
     },
     {
       id: 'status',
@@ -892,7 +1066,7 @@ export default function EscalationManagementPage() {
           )}
         </div>
       ),
-      width: 120,
+      width: 140,
       align: 'center' as const,
     },
   ];
@@ -922,7 +1096,7 @@ export default function EscalationManagementPage() {
       
       {/* Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
@@ -983,6 +1157,20 @@ export default function EscalationManagementPage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
+                  <p className="text-sm text-gray-500">In Yard</p>
+                  <p className="text-2xl font-bold">{formatNumber(stats.in_yard || 0)}</p>
+                </div>
+                <div className="rounded-full bg-blue-100 p-3">
+                  <Warehouse className="h-6 w-6 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
                   <p className="text-sm text-gray-500">Cumulative Balance</p>
                   <p className="text-2xl font-bold">{formatCurrency(stats.total_cumulative_balance)}</p>
                 </div>
@@ -1002,10 +1190,10 @@ export default function EscalationManagementPage() {
             <AlertTriangle size={16} />
             <span>Escalated Loans</span>
           </TabsTrigger>
-          <TabsTrigger value="requests" className="flex items-center space-x-2">
+          {/* <TabsTrigger value="requests" className="flex items-center space-x-2">
             <Send size={16} />
             <span>Escalation Requests</span>
-          </TabsTrigger>
+          </TabsTrigger> */}
         </TabsList>
         
         {/* Escalated Loans Tab */}
@@ -1028,16 +1216,48 @@ export default function EscalationManagementPage() {
             
             {showFilters && (
               <div className="mt-4 space-y-4">
+                {/* Row 1: Basic Info Filters */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
-                    <Label className="text-sm">Officer</Label>
+                    <Label className="text-sm">Search</Label>
                     <Input
-                      placeholder="Officer username or ID"
-                      value={filters.officer_id}
-                      onChange={(e) => setFilters(prev => ({ ...prev, officer_id: e.target.value }))}
+                      placeholder="Loan ID or Customer"
+                      value={filters.search}
+                      onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
                       className="mt-1"
                     />
                   </div>
+                  <div>
+                    <Label className="text-sm">Registration Number</Label>
+                    <Input
+                      placeholder="e.g., KBA123A"
+                      value={filters.registration_number}
+                      onChange={(e) => setFilters(prev => ({ ...prev, registration_number: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-sm">Phone Number</Label>
+                    <Input
+                      placeholder="e.g., 0712345678"
+                      value={filters.phone_number}
+                      onChange={(e) => setFilters(prev => ({ ...prev, phone_number: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-sm">Assigned Officer</Label>
+                    <Input
+                      placeholder="Officer username"
+                      value={filters.assigned_officer}
+                      onChange={(e) => setFilters(prev => ({ ...prev, assigned_officer: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+                
+                {/* Row 2: Status Filters */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
                     <Label className="text-sm">Collection Condition</Label>
                     <select
@@ -1065,16 +1285,32 @@ export default function EscalationManagementPage() {
                     </select>
                   </div>
                   <div>
-                    <Label className="text-sm">Search</Label>
-                    <Input
-                      placeholder="Loan ID or Customer name"
-                      value={filters.search}
-                      onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                      className="mt-1"
-                    />
+                    <Label className="text-sm">Marked for Repossession</Label>
+                    <select
+                      value={filters.to_repossess}
+                      onChange={(e) => setFilters(prev => ({ ...prev, to_repossess: e.target.value }))}
+                      className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
+                    >
+                      <option value="">All</option>
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-sm">Auto-Escalated</Label>
+                    <select
+                      value={filters.auto_escalated}
+                      onChange={(e) => setFilters(prev => ({ ...prev, auto_escalated: e.target.value }))}
+                      className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
+                    >
+                      <option value="">All</option>
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
                   </div>
                 </div>
                 
+                {/* Row 3: Range Filters */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
                     <Label className="text-sm">Min Days Overdue</Label>
@@ -1118,39 +1354,37 @@ export default function EscalationManagementPage() {
                   </div>
                 </div>
                 
+                {/* Row 4: Yard Filter */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <Label className="text-sm">Auto-Escalated</Label>
+                    <Label className="text-sm flex items-center gap-2">
+                      <Warehouse size={14} className="text-blue-500" />
+                      Yard Location
+                    </Label>
                     <select
-                      value={filters.auto_escalated}
-                      onChange={(e) => setFilters(prev => ({ ...prev, auto_escalated: e.target.value }))}
+                      value={filters.yard_filter}
+                      onChange={(e) => setFilters(prev => ({ ...prev, yard_filter: e.target.value }))}
                       className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
                     >
-                      <option value="">All</option>
-                      <option value="true">Yes</option>
-                      <option value="false">No</option>
+                      <option value="">All Yards</option>
+                      <option value="with_yard">With Yard Assigned</option>
+                      <option value="without_yard">Without Yard</option>
+                      {getUniqueYards().map(yard => (
+                        <option key={yard} value={yard}>{yard}</option>
+                      ))}
                     </select>
+                    <p className="text-xs text-gray-400 mt-1">Filter loans by yard assignment</p>
                   </div>
-                  <div>
-                    <Label className="text-sm">Marked for Repossession</Label>
-                    <select
-                      value={filters.to_repossess}
-                      onChange={(e) => setFilters(prev => ({ ...prev, to_repossess: e.target.value }))}
-                      className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-md text-sm"
-                    >
-                      <option value="">All</option>
-                      <option value="true">Yes</option>
-                      <option value="false">No</option>
-                    </select>
-                  </div>
-                  <div className="flex items-end space-x-2">
-                    <Button onClick={() => { setPagination(prev => ({ ...prev, page: 1 })); fetchEscalatedLoans(); }} className="flex-1 bg-blue-600 hover:bg-blue-700">
-                      Apply Filters
-                    </Button>
-                    <Button onClick={resetFilters} variant="outline" className="flex-1">
-                      Reset
-                    </Button>
-                  </div>
+                </div>
+                
+                {/* Actions */}
+                <div className="flex justify-end space-x-2 pt-2 border-t">
+                  <Button onClick={resetFilters} variant="outline" size="sm">
+                    Reset All
+                  </Button>
+                  <Button onClick={() => { setPagination(prev => ({ ...prev, page: 1 })); fetchEscalatedLoans(); }} className="bg-blue-600 hover:bg-blue-700" size="sm">
+                    Apply Filters
+                  </Button>
                 </div>
               </div>
             )}
@@ -1161,26 +1395,31 @@ export default function EscalationManagementPage() {
             <CardHeader className="pb-0">
               <div className="flex justify-between items-center">
                 <h2 className="text-lg font-semibold">Escalated Loans</h2>
-                {selectedRowIds.size > 0 && (
-                  <ActionGuard requirement="can_create_escalation_request" fallback={null}>
-                    <Button 
-                      onClick={() => {
-                        const firstLoan = escalatedLoans.find(l => selectedRowIds.has(l.id));
-                        if (firstLoan) {
-                          setSelectedLoan(firstLoan);
-                          resetEscalationForm();
-                          setEscalationForm(prev => ({ ...prev, loan_id: firstLoan.loan_id }));
-                          setIsEscalateModalOpen(true);
-                        }
-                      }}
-                      className="bg-red-600 hover:bg-red-700"
-                      size="sm"
-                    >
-                      <Flag size={14} className="mr-2" />
-                      Escalate Selected ({selectedRowIds.size})
-                    </Button>
-                  </ActionGuard>
-                )}
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-500">
+                    {pagination.total} loans found
+                  </span>
+                  {selectedRowIds.size > 0 && (
+                    <ActionGuard requirement="can_create_escalation_request" fallback={null}>
+                      <Button 
+                        onClick={() => {
+                          const firstLoan = escalatedLoans.find(l => selectedRowIds.has(l.id));
+                          if (firstLoan) {
+                            setSelectedLoan(firstLoan);
+                            resetEscalationForm();
+                            setEscalationForm(prev => ({ ...prev, loan_id: firstLoan.loan_id }));
+                            setIsEscalateModalOpen(true);
+                          }
+                        }}
+                        className="bg-red-600 hover:bg-red-700"
+                        size="sm"
+                      >
+                        <Flag size={14} className="mr-2" />
+                        Escalate Selected ({selectedRowIds.size})
+                      </Button>
+                    </ActionGuard>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -1198,10 +1437,14 @@ export default function EscalationManagementPage() {
                   currentPage: pagination.page,
                   pageSize: pagination.page_size,
                   onPageChange: (newPage) => setPagination(prev => ({ ...prev, page: newPage as number })),
-                  serverSide: true,
-                  hasNextPage: pagination.page < pagination.total_pages,
-                  hasPreviousPage: pagination.page > 1
+                  onPageSizeChange: (newSize) => {
+                    setPagination(prev => ({ ...prev, page_size: newSize, page: 1 }));
+                  },
+                  hasNextPage: pagination.page * pagination.page_size < pagination.total,
+                  hasPreviousPage: pagination.page > 1,
+                  serverSide: true
                 }}
+                pageSizeOptions={[20, 50, 100, 500, 1000]}
                 className="rounded-b-xl"
               />
             </CardContent>
@@ -1235,7 +1478,7 @@ export default function EscalationManagementPage() {
           setSelectedLoan(null);
           resetEscalationForm();
         }}
-        title={`Escalate Loan: ${selectedLoan?.loan_id || escalationForm.loan_id} - ${selectedLoan?.customer_name || ''}`}
+        title={`Escalate Loan: ${selectedLoan?.loan_id || escalationForm.loan_id}`}
         size="xl"
       >
         <div className="space-y-6 max-h-[85vh] overflow-y-auto px-1">
@@ -1249,8 +1492,15 @@ export default function EscalationManagementPage() {
               <div className="text-sm text-blue-700">
                 <div>Loan ID: {selectedLoan.loan_id}</div>
                 <div>Customer: {selectedLoan.customer_name}</div>
+                <div>Registration: {selectedLoan.registration_number || 'N/A'}</div>
                 <div>Current Balance: {formatCurrency(selectedLoan.cumulative_balance)}</div>
                 <div>Days Overdue: {selectedLoan.days_overdue} days</div>
+                {selectedLoan.collection_condition === 'in_yard' && selectedLoan.yard_location && (
+                  <div className="flex items-center gap-1 mt-1">
+                    <Warehouse size={14} />
+                    <span>Current Yard: {selectedLoan.yard_location}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1264,7 +1514,10 @@ export default function EscalationManagementPage() {
                     ? 'border-red-500 text-red-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
-                onClick={() => setEscalationForm({...escalationForm, escalation_type: 'repossess', to_repossess: true, new_repossession_status: '', new_collection_condition: ''})}
+                onClick={() => {
+                  setEscalationForm({...escalationForm, escalation_type: 'repossess', to_repossess: true, new_repossession_status: '', new_collection_condition: ''});
+                  setShowYardFields(false);
+                }}
               >
                 <Gavel size={16} className="inline mr-2" />
                 Repossession Status
@@ -1275,7 +1528,9 @@ export default function EscalationManagementPage() {
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
-                onClick={() => setEscalationForm({...escalationForm, escalation_type: 'collection', to_repossess: false, new_repossession_status: '', new_collection_condition: ''})}
+                onClick={() => {
+                  setEscalationForm({...escalationForm, escalation_type: 'collection', to_repossess: false, new_repossession_status: '', new_collection_condition: ''});
+                }}
               >
                 <ShieldAlert size={16} className="inline mr-2" />
                 Collection Condition
@@ -1286,7 +1541,9 @@ export default function EscalationManagementPage() {
                     ? 'border-purple-500 text-purple-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
-                onClick={() => setEscalationForm({...escalationForm, escalation_type: 'both', to_repossess: true})}
+                onClick={() => {
+                  setEscalationForm({...escalationForm, escalation_type: 'both', to_repossess: true});
+                }}
               >
                 <Flag size={16} className="inline mr-2" />
                 Both
@@ -1353,7 +1610,13 @@ export default function EscalationManagementPage() {
                   return (
                     <div
                       key={condition.value}
-                      onClick={() => setEscalationForm({...escalationForm, new_collection_condition: condition.value})}
+                      onClick={() => {
+                        setEscalationForm({...escalationForm, new_collection_condition: condition.value});
+                        setShowYardFields(condition.value === 'in_yard');
+                        if (condition.value !== 'in_yard') {
+                          setEscalationForm(prev => ({ ...prev, yard_location_id: undefined, yard_notes: '' }));
+                        }
+                      }}
                       className={`border-2 rounded-lg p-3 cursor-pointer transition-all ${
                         isSelected
                           ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
@@ -1380,6 +1643,93 @@ export default function EscalationManagementPage() {
               </div>
               {escalationErrors.new_collection_condition && (
                 <p className="text-red-500 text-sm mt-2">{escalationErrors.new_collection_condition}</p>
+              )}
+
+              {/* Yard Fields - Shown when IN_YARD is selected */}
+              {showYardFields && (
+                <div className="mt-4 bg-blue-50 p-4 rounded-lg border border-blue-200 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Warehouse size={18} className="text-blue-600" />
+                    <h4 className="font-medium text-blue-900">Yard Location Details</h4>
+                  </div>
+
+                  <div>
+                    <Label className="block text-sm font-medium text-gray-700 mb-1">
+                      Select Yard <span className="text-red-500">*</span>
+                    </Label>
+                    <select
+                      value={escalationForm.yard_location_id || ''}
+                      onChange={(e) => setEscalationForm(prev => ({ 
+                        ...prev, 
+                        yard_location_id: e.target.value ? parseInt(e.target.value) : undefined 
+                      }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    >
+                      <option value="">Select a yard...</option>
+                      {yardLocations.filter(y => y.is_active).map(yard => (
+                        <option key={yard.id} value={yard.id}>
+                          {yard.name} - {yard.location}
+                        </option>
+                      ))}
+                    </select>
+                    {yardLocations.filter(y => y.is_active).length === 0 && (
+                      <p className="text-sm text-amber-600 mt-1">
+                        No active yards available. Please create a yard location first.
+                      </p>
+                    )}
+                    {escalationErrors.yard_location && (
+                      <p className="text-red-500 text-sm mt-1">{escalationErrors.yard_location}</p>
+                    )}
+                  </div>
+
+                  {/* Selected Yard Info */}
+                  {escalationForm.yard_location_id && (
+                    <div className="bg-white p-3 rounded border border-gray-200 text-sm space-y-1">
+                      {(() => {
+                        const selected = yardLocations.find(y => y.id === escalationForm.yard_location_id);
+                        if (!selected) return null;
+                        return (
+                          <>
+                            <div className="flex items-center gap-2 text-gray-700">
+                              <MapPinIcon size={14} />
+                              <span className="font-medium">{selected.name}</span>
+                            </div>
+                            <div className="text-gray-600 pl-6">{selected.location}</div>
+                            {selected.contact_person && (
+                              <div className="text-gray-600 pl-6 flex items-center gap-2">
+                                <User size={14} />
+                                {selected.contact_person}
+                              </div>
+                            )}
+                            {selected.contact_phone && (
+                              <div className="text-gray-600 pl-6 flex items-center gap-2">
+                                <Phone size={14} />
+                                {selected.contact_phone}
+                              </div>
+                            )}
+                            {selected.notes && (
+                              <div className="text-gray-500 pl-6 text-xs italic">{selected.notes}</div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  <div>
+                    <Label className="block text-sm font-medium text-gray-700 mb-1">
+                      Yard Notes
+                    </Label>
+                    <Textarea
+                      value={escalationForm.yard_notes}
+                      onChange={(e) => setEscalationForm(prev => ({ ...prev, yard_notes: e.target.value }))}
+                      className="w-full"
+                      rows={2}
+                      placeholder="Special instructions, contact person at yard, etc."
+                    />
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -1416,11 +1766,11 @@ export default function EscalationManagementPage() {
               <FileText size={18} className="text-amber-500" />
               Reason Details <span className="text-red-500">*</span>
             </Label>
-            <textarea
+            <Textarea
               value={escalationForm.reason_details}
               onChange={(e) => setEscalationForm({...escalationForm, reason_details: e.target.value})}
               placeholder="Provide detailed explanation of why this escalation is needed..."
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px] ${escalationErrors.reason_details ? 'border-red-500' : 'border-gray-300'}`}
+              className={`min-h-[100px] ${escalationErrors.reason_details ? 'border-red-500' : ''}`}
             />
             {escalationErrors.reason_details && (
               <p className="text-red-500 text-sm mt-1">{escalationErrors.reason_details}</p>
@@ -1433,11 +1783,11 @@ export default function EscalationManagementPage() {
               <Info size={18} className="text-blue-500" />
               Additional Notes (Optional)
             </Label>
-            <textarea
+            <Textarea
               value={escalationForm.request_notes}
               onChange={(e) => setEscalationForm({...escalationForm, request_notes: e.target.value})}
               placeholder="Any additional information that might help the approver..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]"
+              className="min-h-[80px]"
             />
           </div>
 
@@ -1461,6 +1811,14 @@ export default function EscalationManagementPage() {
                   <span className="text-gray-600">New Collection Condition:</span>
                   <span className="font-medium text-blue-700">
                     {COLLECTION_CONDITIONS_FOR_ESCALATION.find(c => c.value === escalationForm.new_collection_condition)?.label}
+                  </span>
+                </div>
+              )}
+              {showYardFields && escalationForm.yard_location_id && (
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Yard Location:</span>
+                  <span className="font-medium text-blue-700">
+                    {yardLocations.find(y => y.id === escalationForm.yard_location_id)?.name || 'Selected'}
                   </span>
                 </div>
               )}
@@ -1536,21 +1894,6 @@ export default function EscalationManagementPage() {
               </div>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs text-gray-500">Escalation Type</p>
-                <p className="text-sm">
-                  {selectedRequest.new_repossession_status && selectedRequest.new_collection_condition ? 'Both' :
-                   selectedRequest.new_repossession_status ? 'Repossession' :
-                   selectedRequest.new_collection_condition ? 'Collection Condition Change' : 'None'}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500">Reason</p>
-                <p className="text-sm">{selectedRequest.reason}</p>
-              </div>
-            </div>
-            
             {selectedRequest.new_repossession_status && (
               <div>
                 <p className="text-xs text-gray-500">Target Repossession Status</p>
@@ -1564,6 +1907,28 @@ export default function EscalationManagementPage() {
                 <CollectionConditionBadge condition={selectedRequest.new_collection_condition} />
               </div>
             )}
+            
+            {selectedRequest.yard_location && (
+              <div>
+                <p className="text-xs text-gray-500">Yard Location</p>
+                <div className="bg-blue-50 p-3 rounded-md border border-blue-200">
+                  <div className="flex items-center gap-2 text-blue-800 font-medium">
+                    <Warehouse size={16} />
+                    {selectedRequest.yard_location}
+                  </div>
+                  {selectedRequest.yard_notes && (
+                    <div className="text-sm text-blue-600 pl-6 mt-1 border-t border-blue-100 pt-1">
+                      <strong>Notes:</strong> {selectedRequest.yard_notes}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            <div>
+              <p className="text-xs text-gray-500">Reason</p>
+              <p className="text-sm capitalize">{selectedRequest.reason?.replace(/_/g, ' ')}</p>
+            </div>
             
             {selectedRequest.reason_details && (
               <div>
@@ -1625,6 +1990,12 @@ export default function EscalationManagementPage() {
             <div className="bg-gray-50 p-3 rounded">
               <p className="text-sm">Loan: <span className="font-medium">{selectedRequest.loan_id}</span></p>
               <p className="text-sm mt-1">Reason: <span className="font-medium">{selectedRequest.reason}</span></p>
+              {selectedRequest.yard_location && (
+                <p className="text-sm mt-1 text-blue-600 flex items-center gap-1">
+                  <Warehouse size={14} />
+                  Yard: {selectedRequest.yard_location}
+                </p>
+              )}
             </div>
           )}
           
@@ -1724,6 +2095,12 @@ export default function EscalationManagementPage() {
               <div className="bg-gray-50 p-3 rounded">
                 <p className="text-sm">Loan: <span className="font-medium">{selectedRequest.loan_id}</span></p>
                 <p className="text-sm mt-1">Reason: <span className="font-medium">{selectedRequest.reason}</span></p>
+                {selectedRequest.yard_location && (
+                  <p className="text-sm mt-1 text-blue-600 flex items-center gap-1">
+                    <Warehouse size={14} />
+                    Yard: {selectedRequest.yard_location}
+                  </p>
+                )}
               </div>
               
               <div className="bg-blue-50 p-3 rounded-lg">
@@ -1736,6 +2113,9 @@ export default function EscalationManagementPage() {
                     )}
                     {selectedRequest.new_collection_condition && (
                       <li className="ml-4">✓ Change collection condition to {selectedRequest.new_collection_condition}</li>
+                    )}
+                    {selectedRequest.yard_location && (
+                      <li className="ml-4">✓ Assign yard: {selectedRequest.yard_location}</li>
                     )}
                   </div>
                 </div>
