@@ -7,6 +7,7 @@ import { apiClient } from '@/lib/api';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Image from "next/image";
+import Link from 'next/link';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -105,6 +106,12 @@ export default function LoginPage() {
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent-500 focus:border-accent-500"
                 disabled={isLoading}
               />
+              <div className="flex items-center justify-end">
+               <div className="text-sm">
+                 <a href="/forgot-password" 
+                 className="font-medium text-indigo-600 hover:text-indigo-500" >Forgot your password?</a>
+               </div>
+             </div>
             </div>
 
             <Button
