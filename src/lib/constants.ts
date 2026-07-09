@@ -1,4 +1,4 @@
-export const API_BASE_URL = 'http://192.168.1.250:8000/api/collections';
+export const API_BASE_URL = 'http://localhost:8000/api/collections';
 //export const API_BASE_URL = 'http://br.choice-bank.com:8000/api/collections';
 
 export const OUT_API_BASE_URL = 'http://10.24.1.1:8000/api/collections';

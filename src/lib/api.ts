@@ -207,7 +207,35 @@ class APIClient {
     }
   }
 
-  // Inside the APIClient class, add this method:
+// Request password reset link by sending an email address
+  public async requestPasswordReset(email: string): Promise<{ detail: string }> {
+    try {
+      const response = await this.client.post<{ detail: string }>('/auth/password/request/', { email });
+      return response.data; // Added .data here
+    } catch (error: any) {
+      if (error.response?.data) {
+        throw error.response.data;
+      }
+      throw error;
+    }
+  }
+
+  // Submit the new password alongside token credentials
+  public async confirmPasswordReset(data: Record<string, string>): Promise<{ detail: string }> {
+    try {
+      const response = await this.client.post<{ detail: string }>('/auth/password/confirm/', {
+        uid: data.uid,
+        token: data.token,
+        new_password: data.newPassword,
+      });
+      return response.data; // Added .data here
+    } catch (error: any) {
+      if (error.response?.data) {
+        throw error.response.data;
+      }
+      throw error;
+    }
+  }
 
 public async getUserDetails(): Promise<UserDetailsResponse> {
   try {
