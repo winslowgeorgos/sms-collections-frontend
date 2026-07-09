@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation"; 
 import { EscalationRecord, EscalationApiResponse } from "../../../types"; 
-import { OUT_API_BASE_URL } from "@/lib/constants";
+import { OUT_API_BASE_URL, API_BASE_URL } from "@/lib/constants";
+
 import {  
   ChevronLeft, 
   ChevronRight, 
@@ -58,7 +59,21 @@ export default function EscalationWorkspace() {
   );
 }
 
+const getBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // Check if the browser route reads 10.24.1.1
+    console.log("hostname : ", hostname)
+    if (hostname === '10.24.1.1') {
+      return OUT_API_BASE_URL;
+    }
+  }
+  return API_BASE_URL;
+};
+
+
 function EscalationWorkspaceContent() {
+  const base_url = getBaseUrl() ?? API_BASE_URL
   const [viewMode, setViewMode] = useState<ViewMode>("my_escalations");
   const [rawApiData, setRawApiData] = useState<EscalationRecord[]>([]);
   const [displayData, setDisplayData] = useState<EscalationRecord[]>([]); 
@@ -113,7 +128,7 @@ function EscalationWorkspaceContent() {
   const fetchEscalationData = useCallback(async () => {
     setLoading(true);
     try {
-      let url = `${OUT_API_BASE_URL}/loan-processor/escalation/escalated-loans/?page=${page}&page_size=${pageSize}`;
+      let url = `${base_url}/loan-processor/escalation/escalated-loans/?page=${page}&page_size=${pageSize}`;
 
       if (activeTabUrl === "my_escalations") {
         const loggedInOfficerId = localStorage.getItem("user_id") || "1"; 
