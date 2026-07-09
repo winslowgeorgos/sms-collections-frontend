@@ -285,6 +285,38 @@ export interface FlaggedCustomer {
 
 // types/index.ts - Update MyLoan interface if it exists separately
 
+// types/index.ts
+
+export interface OfficerDetails {
+  id: number;
+  username: string;
+  full_name: string;
+  email: string;
+}
+
+export interface YardLocation {
+  id: number;
+  name: string;
+  location: string;
+  contact_phone: string | null;
+  contact_person: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface YardStats {
+  total_yards: number;
+  active_yards: number;
+  inactive_yards: number;
+  yards_with_contact: number;
+  total_loans_in_yards: number;
+  total_installments_in_yards: number;
+}
+
 export interface Loan {
   id: string;
   loan_id: string;
@@ -341,8 +373,369 @@ export interface Loan {
   repossession_completed_at: string | null;
   auto_escalated_at: string | null;
   repossession_notes: string | null;
+  
+  // ============ YARD TRACKING FIELDS ============
+  yard_location: YardLocation | null;
+  yard_location_id: number | null;
+  yard_entered_at: string | null;
+  yard_notes: string | null;
+  yard_display_name: string | null;
+  yard_full_location: string | null;
 }
 
+// ============ ESCALATION REQUEST TYPES ============
+
+export interface EscalationRequest {
+  id: string;
+  target_description: string;
+  escalation_type: 'repossess' | 'collection_condition' | 'both';
+  escalation_type_display: string;
+  to_repossess: boolean;
+  new_collection_condition: string | null;
+  new_collection_condition_display: string | null;
+  new_repossession_status: string | null;
+  new_repossession_status_display: string | null;
+  reason: string;
+  reason_display: string;
+  reason_details: string | null;
+  request_notes: string | null;
+  supporting_documents: string[];
+  status: string;
+  status_display: string;
+  requested_by: OfficerDetails;
+  requested_at: string;
+  reviewed_by: OfficerDetails | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
+  executed_by: OfficerDetails | null;
+  executed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  loan_info: LoanInfo | null;
+  first_default_installment: FirstDefaultInstallment | null;
+  // Yard fields
+  yard_location: YardLocation | null;
+  yard_notes: string | null;
+  yard_display: string | null;
+}
+
+export interface LoanInfo {
+  loan_id: string;
+  customer_name: string;
+  phone_number: string;
+  total_outstanding: number;
+  current_repossession_status: string;
+  current_repossession_status_display: string;
+  current_collection_condition: string;
+  current_collection_condition_display: string;
+  to_repossess: boolean;
+  current_yard_location: string | null;
+  current_yard_notes: string | null;
+}
+
+export interface FirstDefaultInstallment {
+  installment_id: number;
+  due_date: string | null;
+  days_overdue: number;
+  cumulative_balance: number;
+  balance: number;
+}
+
+// ============ ESCALATION REQUEST CREATE/UPDATE TYPES ============
+
+export interface EscalationRequestCreate {
+  loan_id?: string;
+  installment_id?: number;
+  reason: string;
+  reason_details?: string;
+  to_repossess: boolean;
+  new_collection_condition?: string;
+  new_repossession_status?: string;
+  request_notes?: string;
+  supporting_documents?: string[];
+  is_update?: boolean;
+  // Yard fields
+  yard_location_id?: number;
+  yard_notes?: string;
+}
+
+export interface EscalationRequestApprove {
+  review_notes?: string;
+}
+
+export interface EscalationRequestReject {
+  review_notes: string;
+}
+
+export interface EscalationRequestCancel {
+  reason?: string;
+}
+
+// ============ ESCALATION FILTERS ============
+
+export interface EscalationFilters {
+  status?: string;
+  requested_by?: number;
+  reviewed_by?: number;
+  start_date?: string;
+  end_date?: string;
+  limit?: number;
+  page?: number;
+  page_size?: number;
+}
+
+// ============ ESCALATED LOAN TYPES ============
+
+export interface EscalatedLoan {
+  id: string;
+  loan_id: string;
+  customer_name: string;
+  phone_number: string;
+  registration_number: string | null;
+  cumulative_balance: number;
+  days_overdue: number;
+  to_repossess: boolean;
+  repossession_status: string;
+  repossession_status_display: string;
+  collection_condition: string;
+  collection_condition_display: string;
+  assigned_officer: string | null;
+  assigned_officer_id: string | null;
+  escalation_date: string | null;
+  is_auto_escalated: boolean;
+  total_outstanding: number;
+  total_amount: number;
+  // Yard fields
+  yard_location: string | null;
+  yard_location_id: string | null;
+  yard_notes: string | null;
+  yard_entered_at: string | null;
+}
+
+export interface EscalatedInstallment {
+  loan_id: string;
+  customer_name: string;
+  installment_id: number;
+  total_amount: number;
+  balance: number;
+  cumulative_balance: number;
+  due_date: string | null;
+  days_until_due: number;
+  to_repossess: boolean;
+  repossession_status: string;
+  collection_condition: string;
+  repossession_marked_at: string | null;
+  assigned_officer: string | null;
+  // Yard fields
+  yard_location: string | null;
+  yard_location_id: string | null;
+  yard_notes: string | null;
+  yard_entered_at: string | null;
+}
+
+// ============ ESCALATION SUMMARY ============
+
+export interface EscalationSummary {
+  total_escalated: number;
+  marked_for_repossession: number;
+  in_progress: number;
+  repossessed: number;
+  released: number;
+  court_ordered: number;
+  in_yard: number;
+  total_cumulative_balance: number;
+  avg_days_overdue: number;
+}
+
+export interface EscalationAnalytics {
+  summary: {
+    total_escalated_loans: number;
+    total_repossessed: number;
+    auto_escalated_last_30_days: number;
+    total_cumulative_balance_defaulted: number;
+    in_yard_count: number;
+  };
+  overdue_distribution: {
+    '21-30 days': number;
+    '31-60 days': number;
+    '61-90 days': number;
+    '90+ days': number;
+    total_cumulative_balance: number;
+  };
+  by_collection_condition: Array<{
+    condition: string;
+    count: number;
+    total_outstanding: number;
+  }>;
+  by_repossession_status: Array<{
+    status: string;
+    count: number;
+    total_outstanding: number;
+  }>;
+  escalation_requests: {
+    pending: number;
+    approved: number;
+    executed_last_30_days: number;
+  };
+  by_reason: Array<{
+    reason: string;
+    count: number;
+  }>;
+  yard_distribution: Array<{
+    yard_name: string;
+    count: number;
+    total_outstanding: number;
+  }>;
+}
+
+// ============ COLLECTION CONDITION HELPER ============
+
+export const COLLECTION_CONDITIONS = [
+  { value: 'collectable', label: 'Collectable (Default)', icon: 'CheckCircle2', color: 'green' },
+  { value: 'in_yard', label: 'In the Yard', icon: 'Car', color: 'blue' },
+  { value: 'police_case', label: 'Police Case', icon: 'ShieldAlert', color: 'red' },
+  { value: 'law_court', label: 'Law Court', icon: 'Scale', color: 'purple' },
+  { value: 'in_auction', label: 'In Auctioneer', icon: 'Hammer', color: 'amber' },
+  { value: 'third_party', label: 'Third Party Collection', icon: 'Handshake', color: 'indigo' },
+  { value: 'restructured', label: 'Restructured Payment Plan', icon: 'FileText', color: 'teal' },
+  { value: 'written_off', label: 'Written Off', icon: 'XCircleIcon', color: 'gray' },
+  { value: 'settled', label: 'Settled', icon: 'CheckCircle2', color: 'emerald' },
+] as const;
+
+export const REPOSSESSION_STATUSES = [
+  { value: 'not_started', label: 'Not Started', color: 'gray' },
+  { value: 'marked', label: 'Marked for Repossession', color: 'orange' },
+  { value: 'in_progress', label: 'Repossession in Progress', color: 'blue' },
+  { value: 'repossessed', label: 'Repossessed', color: 'red' },
+  { value: 'released', label: 'Released (Customer Paid)', color: 'green' },
+  { value: 'court_ordered', label: 'Court Ordered', color: 'purple' },
+  { value: 'disputed', label: 'Disputed', color: 'amber' },
+] as const;
+
+export const ESCALATION_REASONS = [
+  { value: 'days_overdue', label: 'Days Overdue (21+ days)' },
+  { value: 'customer_unreachable', label: 'Customer Unreachable' },
+  { value: 'payment_default', label: 'Multiple Payment Defaults' },
+  { value: 'asset_risk', label: 'Asset at Risk' },
+  { value: 'customer_request', label: 'Customer Requested Escalation' },
+  { value: 'management_directive', label: 'Management Directive' },
+  { value: 'legal_action', label: 'Legal Action Required' },
+  { value: 'breach_of_contract', label: 'Breach of Contract Terms' },
+] as const;
+
+export type CollectionConditionValue = typeof COLLECTION_CONDITIONS[number]['value'];
+export type RepossessionStatusValue = typeof REPOSSESSION_STATUSES[number]['value'];
+export type EscalationReasonValue = typeof ESCALATION_REASONS[number]['value'];
+
+// ============ ESCALATED LOANS RESPONSE ============
+
+export interface EscalatedLoansResponse {
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  summary: EscalationSummary;
+  loans: EscalatedLoan[];
+  has_next: boolean;
+  has_previous: boolean;
+}
+
+export interface EscalatedInstallmentsResponse {
+  total_count: number;
+  summary: {
+    total_cumulative_balance: number;
+    total_balance: number;
+  };
+  installments: EscalatedInstallment[];
+}
+
+// ============ AUTO ESCALATE RESPONSE ============
+
+export interface AutoEscalateResponse {
+  checked: number;
+  escalated_count: number;
+  skipped_count: number;
+  errors: number;
+  details: Array<{
+    loan_id: string;
+    first_default_installment_id?: number;
+    first_default_due_date?: string;
+    days_overdue?: number;
+    total_defaulted_installments?: number;
+    updated_installments?: number;
+    skipped_installments?: number;
+    skipped_installment_details?: Array<{
+      installment_id: number;
+      reason: string;
+    }>;
+    total_cumulative_balance?: number;
+    status?: string;
+    error?: string;
+  }>;
+  skipped_details: Array<{
+    loan_id: string;
+    reason: string;
+    skip_reason: string;
+  }>;
+}
+
+// ============ YARD MANAGEMENT TYPES ============
+
+export interface YardCreateData {
+  name: string;
+  location: string;
+  contact_phone?: string;
+  contact_person?: string;
+  notes?: string;
+  is_active?: boolean;
+}
+
+export interface YardUpdateData extends Partial<YardCreateData> {}
+
+export interface YardFilters {
+  search?: string;
+  is_active?: boolean;
+  ordering?: string;
+  page: number;
+  page_size: number;
+}
+
+export interface YardListResponse {
+  count: number;
+  results: YardLocation[];
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface YardCreateResponse {
+  success: boolean;
+  message: string;
+  yard: YardLocation;
+}
+
+export interface YardDeleteResponse {
+  success: boolean;
+  message: string;
+}
+
+// ============ ESCALATION STATUS UPDATE ============
+
+export interface EscalationStatusUpdate {
+  new_repossession_status: RepossessionStatusValue;
+  reason: EscalationReasonValue;
+  reason_details?: string;
+  notes?: string;
+}
+
+export interface CollectionConditionUpdate {
+  new_collection_condition: CollectionConditionValue;
+  reason: EscalationReasonValue;
+  reason_details?: string;
+  notes?: string;
+  yard_location_id?: number;
+  yard_notes?: string;
+}
 export interface OfficerDetails {
   id: number;
   username: string;

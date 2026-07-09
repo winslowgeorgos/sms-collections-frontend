@@ -51,7 +51,7 @@ export default function MyCallLogsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [days, setDays] = useState(30);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
     fetchMyCalls();
@@ -282,10 +282,14 @@ export default function MyCallLogsPage() {
                 currentPage: data.page,
                 pageSize: data.page_size,
                 onPageChange: (newPage) => setPage(newPage),
-                serverSide: true,
+                onPageSizeChange: (newSize) => {
+                  setPage(1); // Reset to first page when page size changes
+                  setPageSize(newSize); 
+                },
                 hasNextPage: data.page < data.total_pages,
-
+                serverSide: true
               }}
+              pageSizeOptions={[20, 50, 100, 500, 1000]} // optional, matches default
             />
           )}
         </CardContent>

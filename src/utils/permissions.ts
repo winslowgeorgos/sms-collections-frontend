@@ -123,5 +123,12 @@ export function mapPermissionChecks(permissionChecks: Record<string, boolean>) {
     
     // Users
     can_manage_users: permissionChecks.can_manage_users || permissionChecks.is_superuser,
+    can_approve_escalations: permissionChecks.can_approve_escalations || permissionChecks.is_superuser,
+    can_execute_escalations: permissionChecks.can_execute_escalations || permissionChecks.is_superuser,
+    can_view_all_escalations: permissionChecks.can_view_all_escalations || permissionChecks.is_superuser,
+    can_create_escalation_request: permissionChecks.can_create_escalation_request || permissionChecks.is_superuser,
+    can_cancel_escalation: permissionChecks.can_cancel_escalation || permissionChecks.is_superuser,
+    can_trigger_auto_escalation: permissionChecks.can_trigger_auto_escalation || permissionChecks.is_superuser,
+
   };
 }

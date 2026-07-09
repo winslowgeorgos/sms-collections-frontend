@@ -624,15 +624,20 @@ export default function UnassignedLoansPage() {
                   setSelectedLoans(selectedRows.map((row: UnassignedLoan) => row.loan_id));
                 }
               }}
+
               pagination={{
-                totalCount : data.count,
+                totalCount: data.count,
                 currentPage: data.page,
                 pageSize: data.page_size,
                 onPageChange: handlePageChange,
-                hasNextPage: data.page  < data.total_pages,
-                hasPreviousPage : true,
+                onPageSizeChange: (newSize) => {
+                  setFilters(prev => ({ ...prev, page_size: newSize, page: 1 }));
+                },
+                hasNextPage: data.page * data.page_size < data.count,
+                hasPreviousPage: data.page > 1,
                 serverSide: true
               }}
+              pageSizeOptions={[20, 50, 100, 500, 1000]} // optional, matches default
               virtualized={true}
             />
           )}

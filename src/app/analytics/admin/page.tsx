@@ -36,6 +36,10 @@ import {
 } from 'recharts';
 
 import { ActionGuard } from '@/components/auth/action-guard';
+// In app/analytics/admin/page.tsx, add the import:
+import EscalationAnalyticsTab from '@/components/escalations/EscalationAnalyticsTab';
+
+
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -1779,6 +1783,10 @@ export default function AdminAnalyticsDashboard() {
             <LayoutDashboard size={16} />
             <span>Overview</span>
           </TabsTrigger>
+          <TabsTrigger value="escalation" className="flex items-center space-x-2">
+            <Shield size={16} />
+            <span>Escalation</span>
+          </TabsTrigger>
           {canAccessSchedules && (
             <TabsTrigger value="schedules" className="flex items-center space-x-2">
               <Calendar size={16} />
@@ -1802,6 +1810,12 @@ export default function AdminAnalyticsDashboard() {
             <span>Insights & Forecast</span>
           </TabsTrigger>
         </TabsList>
+
+
+
+      <TabsContent value="escalation" className="space-y-6">
+        <EscalationAnalyticsTab />
+      </TabsContent>
 
         {/* Schedules Tab - Simplified for brevity, keep your existing implementation */}
         <TabsContent value="schedules" className="space-y-6">

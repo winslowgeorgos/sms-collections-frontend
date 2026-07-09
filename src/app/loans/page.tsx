@@ -673,7 +673,7 @@ export default function LoansPage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Loans</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.total_loans}</p>
+                <p className="text-2xl font-bold text-gray-900">{totalCount}</p>
               </div>
             </div>
           </CardContent>
@@ -807,14 +807,21 @@ export default function LoansPage() {
               rowKey={(row: Loan) => row.id}
               selectionMode="none"
               virtualized={true}
+
+
               pagination={{
                 totalCount,
                 currentPage: filters.page,
                 pageSize: filters.page_size,
                 onPageChange: handlePageChange,
+                onPageSizeChange: (newSize) => {
+                  setFilters(prev => ({ ...prev, page_size: newSize, page: 1 }));
+                },
                 hasNextPage: filters.page * filters.page_size < totalCount,
+                hasPreviousPage: filters.page > 1,
                 serverSide: true
               }}
+              pageSizeOptions={[20, 50, 100, 500, 1000]} // optional, matches default
             />
           )}
         </CardContent>

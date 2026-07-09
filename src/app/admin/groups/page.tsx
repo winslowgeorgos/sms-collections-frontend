@@ -218,6 +218,7 @@ export default function AdminGroupsPage() {
               onPageChange: (page) => fetchGroups(page, search),
               serverSide: true,
             }}
+            
             serverSideSearch={search}
             onServerSearchChange={handleSearch}
           />

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { NOTIFY_BASE_URL } from '@/lib/constants';
+import { NOTIFY_BASE_URL, OUT_NOTIFY_BASE_URL,  }  from '@/lib/constants';
 
 interface Notification {
   id: string;
@@ -17,7 +17,23 @@ interface Notification {
 
 type FilterType = 'all' | 'read' | 'unread';
 
+const getBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // Check if the browser route reads 10.24.1.1
+    console.log("hostname : ", hostname)
+    if (hostname === '10.24.1.1') {
+      return OUT_NOTIFY_BASE_URL;
+    }
+  }
+  return NOTIFY_BASE_URL;
+};
+
 export default function NotificationLog() {
+
+    const BASE_URL = getBaseUrl()
+
+
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
@@ -49,7 +65,7 @@ export default function NotificationLog() {
       const headers = getAuthHeader();
       
       // Building backend query parameters
-      let url = `${NOTIFY_BASE_URL}/?page=${page}`;
+      let url = `${BASE_URL}/?page=${page}`;
       if (activeFilter === 'read') url += '&is_read=true';
       if (activeFilter === 'unread') url += '&is_read=false';
 
@@ -122,7 +138,7 @@ export default function NotificationLog() {
     }
 
     try {
-      await fetch(`${NOTIFY_BASE_URL}/${id}/mark_read/`, {
+      await fetch(`${BASE_URL}/${id}/mark_read/`, {
         method: 'POST',
         headers: getAuthHeader(),
       });
@@ -141,7 +157,7 @@ export default function NotificationLog() {
     }
 
     try {
-      await fetch(`${NOTIFY_BASE_URL}/mark_all_read/`, {
+      await fetch(`${BASE_URL}/mark_all_read/`, {
         method: 'POST',
         headers: getAuthHeader(),
       });

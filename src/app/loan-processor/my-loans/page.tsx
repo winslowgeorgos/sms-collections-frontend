@@ -1,456 +1,702 @@
+// app/loans/page.tsx
+
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Modal } from '@/components/ui/modal';
+import { FormInput } from '@/components/forms/FormInput';
 import { apiClient } from '@/lib/api';
-import { MyLoan } from '@/types/index';
+import { Loan } from '@/types/index';
 import { 
-  RefreshCw, Eye, AlertCircle, 
-  CheckCircle, Calendar, Phone, X,
-  SlidersHorizontal, Filter, Clock, PhoneCall,
-  CalendarRange, TrendingUp, DollarSign, Users,
-  Info, Plus, Minus, CalendarDays, Gavel, 
-  ShieldAlert, Car, Scale, Ban, Briefcase,
-  FileText, Flag, AlertTriangle
+  Plus, Edit, Trash2, Search, Filter, UserPlus, Download, 
+  AlertCircle, Calendar, DollarSign, Users, TrendingUp,
+  Eye, CheckCircle, XCircle, Clock, RefreshCw, Gavel,
+  ShieldAlert, Car, Scale, Ban, Briefcase, FileText, Flag,
+  AlertTriangle, Building2, Hammer, Handshake, XCircle as XCircleIcon,
+  CheckCircle2, Warehouse, MapPin, Phone, User, Clipboard,
+  ChevronDown, ChevronUp, ExternalLink
 } from 'lucide-react';
 import GenericTable from '@/components/ui/cTable';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import Link from 'next/link';
+import { ActionGuard } from '@/components/auth/action-guard';
 import { Badge } from '@/components/ui/badge';
 
-interface MyLoansResponse {
-  count: number;
-  page: number;
-  page_size: number;
-  total_pages: number;
-  results: MyLoan[];
-}
-
-interface FilterState {
+interface LoanFilters {
+  officer_id?: string;
+  officer_username?: string;
   loan_id?: string;
   customer_name?: string;
   phone_number?: string;
   registration_number?: string;
   identity_num?: string;
   status?: string;
-  is_overdue?: string;
+  is_active?: boolean;
+  is_overdue?: boolean;
+  current_month_only?: boolean;
+  assigned_only?: boolean;
+  unassigned_only?: boolean;
   total_amount_min?: string;
   total_amount_max?: string;
   outstanding_min?: string;
   outstanding_max?: string;
-  assigned_after?: string;
-  assigned_before?: string;
-  due_date_after?: string;
-  due_date_before?: string;
   disburse_date_after?: string;
   disburse_date_before?: string;
-  current_month_only?: string;
-  // Call log filters
-  call_log_created_after?: string;
-  call_log_created_before?: string;
-  without_call_log_created_after?: string;
-  without_call_log_created_before?: string;
-  // Current installment due date
-  current_installment_due_date_start?: string;
-  current_installment_due_date_end?: string;
-  // Escalation/Repossession filters
-  cumulative_balance_gt_zero?: string;
-  actual_repossessed?: string;
+  due_date_after?: string;
+  due_date_before?: string;
+  cumulative_balance_gt_zero?: boolean;
+  actual_repossessed?: boolean;
   auto_escalated_after?: string;
   auto_escalated_before?: string;
-  auto_escalated_has?: string;
+  auto_escalated_has?: boolean;
   collection_condition?: string;
   collection_condition_not?: string;
   repossession_completed_after?: string;
   repossession_completed_before?: string;
-  repossession_completed_has?: string;
+  repossession_completed_has?: boolean;
   repossession_marked_after?: string;
   repossession_marked_before?: string;
-  repossession_marked_has?: string;
+  repossession_marked_has?: boolean;
   repossession_status?: string;
   repossession_status_not?: string;
-  to_repossess?: string;
+  to_repossess?: boolean;
   ordering?: string;
-  page_size?: string;
+  page: number;
+  page_size: number;
+  search?: string;
+}
+
+interface LoanStats {
+  total_loans: number;
+  active_loans: number;
+  assigned_loans: number;
+  unassigned_loans: number;
+  total_installments: number;
+  active_installments: number;
+  overdue_installments: number;
+  current_month_cumulative_balance: number;
+  current_month_installments: number;
+  average_cumulative_balance: number;
+  timestamp: string;
 }
 
 // Collection condition options based on models.py
 const COLLECTION_CONDITIONS = [
-  { value: 'collectable', label: 'Collectable (Default)' },
-  { value: 'in_yard', label: 'In the Yard' },
-  { value: 'police_case', label: 'Police Case' },
-  { value: 'law_court', label: 'Law Court' },
-  { value: 'in_auction', label: 'In Auctioneer' },
-  { value: 'third_party', label: 'Third Party Collection' },
-  { value: 'restructured', label: 'Restructured Payment Plan' },
-  { value: 'written_off', label: 'Written Off' },
-  { value: 'settled', label: 'Settled' },
+  { value: 'collectable', label: 'Collectable (Default)', icon: CheckCircle2, color: 'green' },
+  { value: 'in_yard', label: 'In the Yard', icon: Car, color: 'blue' },
+  { value: 'police_case', label: 'Police Case', icon: ShieldAlert, color: 'red' },
+  { value: 'law_court', label: 'Law Court', icon: Scale, color: 'purple' },
+  { value: 'in_auction', label: 'In Auctioneer', icon: Hammer, color: 'amber' },
+  { value: 'third_party', label: 'Third Party Collection', icon: Handshake, color: 'indigo' },
+  { value: 'restructured', label: 'Restructured Payment Plan', icon: FileText, color: 'teal' },
+  { value: 'written_off', label: 'Written Off', icon: XCircleIcon, color: 'gray' },
+  { value: 'settled', label: 'Settled', icon: CheckCircle2, color: 'emerald' },
 ];
 
 // Repossession status options
 const REPOSSESSION_STATUSES = [
-  { value: 'not_started', label: 'Not Started' },
-  { value: 'marked', label: 'Marked for Repossession' },
-  { value: 'in_progress', label: 'Repossession in Progress' },
-  { value: 'repossessed', label: 'Repossessed' },
-  { value: 'released', label: 'Released (Customer Paid)' },
-  { value: 'court_ordered', label: 'Court Ordered' },
-  { value: 'disputed', label: 'Disputed' },
+  { value: 'not_started', label: 'Not Started', color: 'gray' },
+  { value: 'marked', label: 'Marked for Repossession', color: 'orange' },
+  { value: 'in_progress', label: 'Repossession in Progress', color: 'blue' },
+  { value: 'repossessed', label: 'Repossessed', color: 'red' },
+  { value: 'released', label: 'Released (Customer Paid)', color: 'green' },
+  { value: 'court_ordered', label: 'Court Ordered', color: 'purple' },
+  { value: 'disputed', label: 'Disputed', color: 'amber' },
 ];
 
-export default function MyLoansPage() {
-  const router = useRouter();
-  const [data, setData] = useState<MyLoansResponse>({
-    count: 0,
-    page: 1,
-    page_size: 500,
-    total_pages: 1,
-    results: []
-  });
-  const [isLoading, setIsLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [page, setPage] = useState(1);
-  
-  // ============ SET DEFAULT FILTERS HERE ============
-  // Initialize filters with cumulative_balance_gt_zero = 'true'
-  const [filters, setFilters] = useState<FilterState>({
-    cumulative_balance_gt_zero: 'true'  // Default filter applied
-  });
-  
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  
-  // Advanced filter state
-  const [advancedFilters, setAdvancedFilters] = useState({
-    loan_id: '',
-    customer_name: '',
-    phone_number: '',
-    registration_number: '',
-    identity_num: '',
-    status: null as string | null,
-    is_overdue: null as string | null,
-    total_amount_min: '',
-    total_amount_max: '',
-    outstanding_min: '',
-    outstanding_max: '',
-    assigned_after: '',
-    assigned_before: '',
-    due_date_after: '',
-    due_date_before: '',
-    disburse_date_after: '',
-    disburse_date_before: '',
-    current_month_only: null as string | null,
-    // Call log filters
-    call_log_created_after: '',
-    call_log_created_before: '',
-    without_call_log_created_after: '',
-    without_call_log_created_before: '',
-    // Current installment due date
-    current_installment_due_date_start: '',
-    current_installment_due_date_end: '',
-    // Escalation/Repossession filters
-    cumulative_balance_gt_zero: 'true',  // Default to true in advanced filters too
-    actual_repossessed: null as string | null,
-    auto_escalated_after: '',
-    auto_escalated_before: '',
-    auto_escalated_has: null as string | null,
-    collection_condition: '',
-    collection_condition_not: '',
-    repossession_completed_after: '',
-    repossession_completed_before: '',
-    repossession_completed_has: null as string | null,
-    repossession_marked_after: '',
-    repossession_marked_before: '',
-    repossession_marked_has: null as string | null,
-    repossession_status: '',
-    repossession_status_not: '',
-    to_repossess: null as string | null,
-    ordering: '-disburse_time',
-  });
+// Escalation reasons
+const ESCALATION_REASONS = [
+  { value: 'days_overdue', label: 'Days Overdue (21+ days)' },
+  { value: 'customer_unreachable', label: 'Customer Unreachable' },
+  { value: 'payment_default', label: 'Multiple Payment Defaults' },
+  { value: 'asset_risk', label: 'Asset at Risk' },
+  { value: 'customer_request', label: 'Customer Requested Escalation' },
+  { value: 'management_directive', label: 'Management Directive' },
+  { value: 'legal_action', label: 'Legal Action Required' },
+  { value: 'breach_of_contract', label: 'Breach of Contract Terms' },
+];
 
-  const fetchMyLoans = useCallback(async () => {
+interface YardLocation {
+  id: number;
+  name: string;
+  location: string;
+  contact_phone: string | null;
+  contact_person: string | null;
+  notes: string | null;
+  is_active: boolean;
+}
+
+interface EscalationRequestData {
+  loan_id: string;
+  reason: string;
+  reason_details?: string;
+  to_repossess: boolean;
+  new_collection_condition?: string;
+  new_repossession_status?: string;
+  request_notes?: string;
+  yard_location_id?: number;
+  yard_notes?: string;
+  is_update?: boolean;
+}
+
+export default function LoansPage() {
+  const router = useRouter();
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [filters, setFilters] = useState<LoanFilters>({
+    page: 1,
+    page_size: 20,
+    cumulative_balance_gt_zero: true,
+    officer_id: undefined,
+    officer_username: undefined,
+    loan_id: undefined,
+    customer_name: undefined,
+    phone_number: undefined,
+    registration_number: undefined,
+    identity_num: undefined,
+    status: undefined,
+    is_active: undefined,
+    is_overdue: undefined,
+    current_month_only: false,
+    assigned_only: undefined,
+    unassigned_only: undefined,
+    total_amount_min: undefined,
+    total_amount_max: undefined,
+    outstanding_min: undefined,
+    outstanding_max: undefined,
+    disburse_date_after: undefined,
+    disburse_date_before: undefined,
+    due_date_after: undefined,
+    due_date_before: undefined,
+    ordering: '-disburse_time',
+    search: undefined
+  });
+  const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState<LoanStats>({
+    total_loans: 0,
+    active_loans: 0,
+    assigned_loans: 0,
+    unassigned_loans: 0,
+    total_installments: 0,
+    active_installments: 0,
+    overdue_installments: 0,
+    current_month_cumulative_balance: 0,
+    current_month_installments: 0,
+    average_cumulative_balance: 0,
+    timestamp: '',
+  });
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
+  const [tempFilters, setTempFilters] = useState<LoanFilters>({ ...filters });
+  
+  // Escalation Modal State
+  const [isEscalationModalOpen, setIsEscalationModalOpen] = useState(false);
+  const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
+  const [escalationData, setEscalationData] = useState<EscalationRequestData>({
+    loan_id: '',
+    reason: '',
+    reason_details: '',
+    to_repossess: false,
+    new_collection_condition: '',
+    new_repossession_status: '',
+    request_notes: '',
+    yard_location_id: undefined,
+    yard_notes: '',
+    is_update: false,
+  });
+  const [yardLocations, setYardLocations] = useState<YardLocation[]>([]);
+  const [isSubmittingEscalation, setIsSubmittingEscalation] = useState(false);
+  const [escalationError, setEscalationError] = useState<string | null>(null);
+  const [escalationSuccess, setEscalationSuccess] = useState<string | null>(null);
+  const [showYardFields, setShowYardFields] = useState(false);
+
+  // New Yard Management State
+  const [isYardModalOpen, setIsYardModalOpen] = useState(false);
+  const [yardFormData, setYardFormData] = useState({
+    name: '',
+    location: '',
+    contact_phone: '',
+    contact_person: '',
+    notes: '',
+  });
+  const [isSubmittingYard, setIsSubmittingYard] = useState(false);
+  const [yardError, setYardError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchLoans();
+    fetchLoanStats();
+    fetchYardLocations();
+  }, [
+    filters.page, 
+    filters.page_size, 
+    filters.officer_id,
+    filters.officer_username,
+    filters.loan_id,
+    filters.customer_name,
+    filters.phone_number,
+    filters.registration_number,
+    filters.identity_num,
+    filters.status,
+    filters.is_active,
+    filters.is_overdue,
+    filters.current_month_only,
+    filters.assigned_only,
+    filters.unassigned_only,
+    filters.total_amount_min,
+    filters.total_amount_max,
+    filters.outstanding_min,
+    filters.outstanding_max,
+    filters.disburse_date_after,
+    filters.disburse_date_before,
+    filters.due_date_after,
+    filters.due_date_before,
+    filters.ordering,
+    filters.search,
+    filters.cumulative_balance_gt_zero,
+    filters.actual_repossessed,
+    filters.auto_escalated_after,
+    filters.auto_escalated_before,
+    filters.auto_escalated_has,
+    filters.collection_condition,
+    filters.collection_condition_not,
+    filters.repossession_completed_after,
+    filters.repossession_completed_before,
+    filters.repossession_completed_has,
+    filters.repossession_marked_after,
+    filters.repossession_marked_before,
+    filters.repossession_marked_has,
+    filters.repossession_status,
+    filters.repossession_status_not,
+    filters.to_repossess
+  ]);
+
+  const fetchLoans = async () => {
     setIsLoading(true);
     try {
       const client = apiClient.getClient();
-      
-      const params = new URLSearchParams({
-        page: page.toString(),
-        page_size: '500'
-      });
-      
-      if (searchTerm) params.append('search', searchTerm);
+      const queryParams = new URLSearchParams();
       
       Object.entries(filters).forEach(([key, value]) => {
-        if (value && value !== '' && value !== undefined) {
-          params.append(key, value.toString());
+        if (value !== undefined && value !== null && value !== '') {
+          queryParams.append(key, String(value));
         }
       });
-      
-      const url = `/loans/my_loans/?${params.toString()}`;
-      const response = await client.get(url);
-      setData(response.data);
+
+      const response = await client.get(`/loans/?${queryParams.toString()}`);
+      setLoans(response?.data?.results || []);
+      setTotalCount(response?.data?.count || 0);
     } catch (error) {
-      console.error('Error fetching my loans:', error);
+      console.error('Error fetching loans:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [page, searchTerm, filters]);
+  };
 
-  useEffect(() => {
-    fetchMyLoans();
-  }, [fetchMyLoans]);
+  const fetchLoanStats = async () => {
+    try {
+      const client = apiClient.getClient();
+      const response = await client.get('/loan-processor/loan_statistics/');
+      const data = response.data;
+
+      setStats({
+        total_loans: data?.total_loans ?? 0,
+        active_loans: data?.active_loans ?? 0,
+        assigned_loans: data?.assigned_loans ?? 0,
+        unassigned_loans: data?.unassigned_loans ?? 0,
+        total_installments: data?.total_installments ?? 0,
+        active_installments: data?.active_installments ?? 0,
+        overdue_installments: data?.overdue_installments ?? 0,
+        current_month_cumulative_balance: data?.current_month_cumulative_balance ?? 0,
+        current_month_installments: data?.current_month_installments ?? 0,
+        average_cumulative_balance: data?.average_cumulative_balance ?? 0,
+        timestamp: data?.timestamp ?? '',
+      });
+    } catch (error) {
+      console.error('Error fetching loan stats:', error);
+    }
+  };
+
+  const fetchYardLocations = async () => {
+    try {
+      const client = apiClient.getClient();
+      const response = await client.get('/loan-processor/yard-locations/');
+      setYardLocations(response.data || []);
+    } catch (error) {
+      console.error('Error fetching yard locations:', error);
+      setYardLocations([]);
+    }
+  };
+
+  const handleFilterChange = (key: keyof LoanFilters, value: any) => {
+    setFilters(prev => ({ ...prev, [key]: value, page: 1 }));
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      page: 1,
+      page_size: 20,
+      cumulative_balance_gt_zero: true,
+      officer_id: undefined,
+      officer_username: undefined,
+      loan_id: undefined,
+      customer_name: undefined,
+      phone_number: undefined,
+      registration_number: undefined,
+      identity_num: undefined,
+      status: undefined,
+      is_active: undefined,
+      is_overdue: undefined,
+      current_month_only: false,
+      assigned_only: undefined,
+      unassigned_only: undefined,
+      total_amount_min: undefined,
+      total_amount_max: undefined,
+      outstanding_min: undefined,
+      outstanding_max: undefined,
+      disburse_date_after: undefined,
+      disburse_date_before: undefined,
+      due_date_after: undefined,
+      due_date_before: undefined,
+      ordering: '-disburse_time',
+      search: undefined
+    });
+    setTempFilters({
+      page: 1,
+      page_size: 20,
+      ordering: '-disburse_time',
+      current_month_only: false,
+      cumulative_balance_gt_zero: true
+    });
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setFilters(prev => ({ ...prev, page: newPage }));
+  };
 
   const handleViewLoanDetails = (loanId: string) => {
     window.open(`/loans/${loanId}`, '_blank');
   };
 
-  const handleServerFilterChange = (newFilters: Record<string, any>) => {
-    const apiFilters: FilterState = {};
-    
-    Object.entries(newFilters).forEach(([key, value]) => {
-      if (!value || value === '' || (typeof value === 'object' && Object.keys(value).length === 0)) return;
+  const handleExportLoans = async () => {
+    try {
+      const client = apiClient.getClient();
+      const queryParams = new URLSearchParams();
       
-      if (key === 'total_amount' && typeof value === 'object') {
-        if (value.min) apiFilters.total_amount_min = value.min;
-        if (value.max) apiFilters.total_amount_max = value.max;
-      } 
-      else if (key === 'total_outstanding' && typeof value === 'object') {
-        if (value.min) apiFilters.outstanding_min = value.min;
-        if (value.max) apiFilters.outstanding_max = value.max;
-      }
-      else if (key === 'due_date' && typeof value === 'object') {
-        if (value.start) apiFilters.due_date_after = value.start;
-        if (value.end) apiFilters.due_date_before = value.end;
-      }
-      else if (key === 'assigned_at' && typeof value === 'object') {
-        if (value.start) apiFilters.assigned_after = value.start;
-        if (value.end) apiFilters.assigned_before = value.end;
-      }
-      else if (key === 'status') {
-        if (value === 'Overdue') apiFilters.is_overdue = 'true';
-        else if (value === 'Current') apiFilters.is_overdue = 'false';
-        else if (value === 'Paid') {
-          apiFilters.outstanding_min = '0';
-          apiFilters.outstanding_max = '0';
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          queryParams.append(key, String(value));
         }
-      }
-      else {
-        apiFilters[key as keyof FilterState] = value;
-      }
-    });
+      });
+
+      const response = await client.get(`/loan-processor/loans/export/?${queryParams.toString()}`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `loans-export-${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error) {
+      console.error('Error exporting loans:', error);
+    }
+  };
+
+  const handleSort = (columnId: string) => {
+    let ordering = filters.ordering || '';
     
-    setFilters(apiFilters);
-    setPage(1);
+    if (ordering === columnId) {
+      ordering = `-${columnId}`;
+    } else if (ordering === `-${columnId}`) {
+      ordering = '';
+    } else {
+      ordering = columnId;
+    }
+    
+    handleFilterChange('ordering', ordering || undefined);
   };
 
-  const handleServerSearchChange = (search: string) => {
-    setSearchTerm(search);
-    setPage(1);
-  };
-
-  const clearFilters = () => {
-    // Reset to default filter (cumulative_balance_gt_zero = true)
-    setFilters({ cumulative_balance_gt_zero: 'true' });
-    setSearchTerm('');
-    setPage(1);
-    setAdvancedFilters({
-      loan_id: '',
-      customer_name: '',
-      phone_number: '',
-      registration_number: '',
-      identity_num: '',
-      status: null,
-      is_overdue: null,
-      total_amount_min: '',
-      total_amount_max: '',
-      outstanding_min: '',
-      outstanding_max: '',
-      assigned_after: '',
-      assigned_before: '',
-      due_date_after: '',
-      due_date_before: '',
-      disburse_date_after: '',
-      disburse_date_before: '',
-      current_month_only: null,
-      call_log_created_after: '',
-      call_log_created_before: '',
-      without_call_log_created_after: '',
-      without_call_log_created_before: '',
-      current_installment_due_date_start: '',
-      current_installment_due_date_end: '',
-      cumulative_balance_gt_zero: 'true',
-      actual_repossessed: null,
-      auto_escalated_after: '',
-      auto_escalated_before: '',
-      auto_escalated_has: null,
-      collection_condition: '',
-      collection_condition_not: '',
-      repossession_completed_after: '',
-      repossession_completed_before: '',
-      repossession_completed_has: null,
-      repossession_marked_after: '',
-      repossession_marked_before: '',
-      repossession_marked_has: null,
-      repossession_status: '',
-      repossession_status_not: '',
-      to_repossess: null,
-      ordering: '-disburse_time',
-    });
+  const openFilterModal = () => {
+    setTempFilters({ ...filters });
+    setIsFilterModalOpen(true);
   };
 
   const applyAdvancedFilters = () => {
-    const newFilters: FilterState = {};
-    
-    Object.entries(advancedFilters).forEach(([key, value]) => {
-      if (!value || value === '' || value === null) return;
+    setFilters({ ...tempFilters, page: 1 });
+    setIsFilterModalOpen(false);
+  };
+
+  // ============ ESCALATION HANDLERS ============
+  
+  const openEscalationModal = (loan: Loan) => {
+    setSelectedLoan(loan);
+    setEscalationData({
+      loan_id: loan.loan_id,
+      reason: '',
+      reason_details: '',
+      to_repossess: false,
+      new_collection_condition: loan.collection_condition || '',
+      new_repossession_status: loan.repossession_status || '',
+      request_notes: '',
+      yard_location_id: loan.yard_location?.id || undefined,
+      yard_notes: loan.yard_notes || '',
+      is_update: false,
+    });
+    setEscalationError(null);
+    setEscalationSuccess(null);
+    setShowYardFields(loan.collection_condition === 'in_yard');
+    setIsEscalationModalOpen(true);
+  };
+
+  const handleEscalationSubmit = async () => {
+    setIsSubmittingEscalation(true);
+    setEscalationError(null);
+    setEscalationSuccess(null);
+
+    try {
+      const client = apiClient.getClient();
       
-      if (key === 'status') {
-        if (value === 'Overdue') newFilters.is_overdue = 'true';
-        else if (value === 'Current') newFilters.is_overdue = 'false';
-        else if (value === 'Paid') {
-          newFilters.outstanding_min = '0';
-          newFilters.outstanding_max = '0';
+      // Prepare the request data
+      const requestData: any = {
+        loan_id: escalationData.loan_id,
+        reason: escalationData.reason,
+        reason_details: escalationData.reason_details || '',
+        to_repossess: escalationData.to_repossess,
+        request_notes: escalationData.request_notes || '',
+        is_update: escalationData.is_update || false,
+      };
+
+      // Add collection condition if selected
+      if (escalationData.new_collection_condition) {
+        requestData.new_collection_condition = escalationData.new_collection_condition;
+        
+        // If condition is IN_YARD, include yard location
+        if (escalationData.new_collection_condition === 'in_yard') {
+          if (!escalationData.yard_location_id) {
+            setEscalationError('Please select a yard location when setting collection condition to "In the Yard"');
+            setIsSubmittingEscalation(false);
+            return;
+          }
+          requestData.yard_location_id = escalationData.yard_location_id;
+          requestData.yard_notes = escalationData.yard_notes || '';
         }
-      } 
-      else if (key === 'current_month_only' && value === 'true') {
-        newFilters.current_month_only = 'true';
       }
-      else if (key === 'ordering') {
-        newFilters.ordering = value;
+
+      // Add repossession status if provided
+      if (escalationData.new_repossession_status) {
+        requestData.new_repossession_status = escalationData.new_repossession_status;
       }
-      else {
-        newFilters[key as keyof FilterState] = value;
+
+      const response = await client.post('/loan-processor/escalation/request/', requestData);
+
+      if (response.data.success) {
+        setEscalationSuccess('Escalation request created successfully!');
+        setTimeout(() => {
+          setIsEscalationModalOpen(false);
+          fetchLoans();
+          fetchLoanStats();
+        }, 1500);
+      } else {
+        setEscalationError(response.data.error || 'Failed to create escalation request');
       }
+    } catch (error: any) {
+      console.error('Error creating escalation request:', error);
+      setEscalationError(
+        error?.response?.data?.error || 
+        error?.message || 
+        'An error occurred while creating the escalation request'
+      );
+    } finally {
+      setIsSubmittingEscalation(false);
+    }
+  };
+
+  // ============ YARD MANAGEMENT HANDLERS ============
+
+  const openYardModal = () => {
+    setYardFormData({
+      name: '',
+      location: '',
+      contact_phone: '',
+      contact_person: '',
+      notes: '',
     });
+    setYardError(null);
+    setIsYardModalOpen(true);
+  };
+
+  const handleCreateYard = async () => {
+    setIsSubmittingYard(true);
+    setYardError(null);
+
+    try {
+      const client = apiClient.getClient();
+      const response = await client.post('/loan-processor/yard-locations/create/', yardFormData);
+
+      if (response.data.success) {
+        await fetchYardLocations();
+        setIsYardModalOpen(false);
+        // Auto-select the new yard in escalation form if open
+        const newYard = response.data.yard;
+        if (newYard && isEscalationModalOpen) {
+          setEscalationData(prev => ({
+            ...prev,
+            yard_location_id: newYard.id
+          }));
+        }
+      } else {
+        setYardError(response.data.error || 'Failed to create yard location');
+      }
+    } catch (error: any) {
+      console.error('Error creating yard:', error);
+      setYardError(
+        error?.response?.data?.error || 
+        error?.message || 
+        'An error occurred while creating the yard location'
+      );
+    } finally {
+      setIsSubmittingYard(false);
+    }
+  };
+
+  // Helper function to get collection condition badge
+  const getCollectionConditionBadge = (condition: string) => {
+    const found = COLLECTION_CONDITIONS.find(c => c.value === condition);
+    const Icon = found?.icon || AlertTriangle;
+    const colorMap: Record<string, string> = {
+      green: 'bg-green-100 text-green-800 border-green-200',
+      blue: 'bg-blue-100 text-blue-800 border-blue-200',
+      red: 'bg-red-100 text-red-800 border-red-200',
+      purple: 'bg-purple-100 text-purple-800 border-purple-200',
+      amber: 'bg-amber-100 text-amber-800 border-amber-200',
+      indigo: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+      teal: 'bg-teal-100 text-teal-800 border-teal-200',
+      gray: 'bg-gray-100 text-gray-800 border-gray-200',
+      emerald: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    };
+    const colorClass = colorMap[found?.color || 'gray'];
     
-    setFilters(newFilters);
-    setPage(1);
-    setShowAdvancedFilters(false);
+    return (
+      <Badge className={`${colorClass} gap-1`}>
+        <Icon size={12} />
+        {found?.label || condition || 'Collectable'}
+      </Badge>
+    );
   };
 
-  const resetAdvancedFilters = () => {
-    setAdvancedFilters({
-      loan_id: '',
-      customer_name: '',
-      phone_number: '',
-      registration_number: '',
-      identity_num: '',
-      status: null,
-      is_overdue: null,
-      total_amount_min: '',
-      total_amount_max: '',
-      outstanding_min: '',
-      outstanding_max: '',
-      assigned_after: '',
-      assigned_before: '',
-      due_date_after: '',
-      due_date_before: '',
-      disburse_date_after: '',
-      disburse_date_before: '',
-      current_month_only: null,
-      call_log_created_after: '',
-      call_log_created_before: '',
-      without_call_log_created_after: '',
-      without_call_log_created_before: '',
-      current_installment_due_date_start: '',
-      current_installment_due_date_end: '',
-      cumulative_balance_gt_zero: 'true',
-      actual_repossessed: null,
-      auto_escalated_after: '',
-      auto_escalated_before: '',
-      auto_escalated_has: null,
-      collection_condition: '',
-      collection_condition_not: '',
-      repossession_completed_after: '',
-      repossession_completed_before: '',
-      repossession_completed_has: null,
-      repossession_marked_after: '',
-      repossession_marked_before: '',
-      repossession_marked_has: null,
-      repossession_status: '',
-      repossession_status_not: '',
-      to_repossess: null,
-      ordering: '-disburse_time',
-    });
+  // Helper function to get repossession status badge
+  const getRepossessionStatusBadge = (status: string) => {
+    const found = REPOSSESSION_STATUSES.find(s => s.value === status);
+    const colorMap: Record<string, string> = {
+      gray: 'bg-gray-100 text-gray-800',
+      orange: 'bg-orange-100 text-orange-800',
+      blue: 'bg-blue-100 text-blue-800',
+      red: 'bg-red-100 text-red-800',
+      green: 'bg-green-100 text-green-800',
+      purple: 'bg-purple-100 text-purple-800',
+      amber: 'bg-amber-100 text-amber-800',
+    };
+    
+    return (
+      <Badge className={`${colorMap[found?.color || 'gray']} gap-1`}>
+        {found?.label || status || 'Not Started'}
+      </Badge>
+    );
   };
 
-  const activeFilterCount = Object.values(filters).filter(v => v && v !== '').length + (searchTerm ? 1 : 0);
+  // Helper to get yard display
+  const getYardDisplay = (loan: Loan) => {
+    if (loan.yard_location) {
+      return `${loan.yard_location.name} - ${loan.yard_location.location}`;
+    }
+    return null;
+  };
 
   const columns = [
     {
       id: 'loan_id',
       label: 'Loan ID',
-      accessor: (row: MyLoan) => row.loan_id,
-      Cell: (value: string, row: MyLoan) => (
+      accessor: (row: Loan) => row.loan_id,
+      Cell: (value: string, row: Loan) => (
         <button
           onClick={() => handleViewLoanDetails(row.loan_id)}
-          className="text-blue-600 hover:text-blue-800 hover:underline font-mono text-sm transition-colors"
+          className="text-blue-600 hover:text-blue-800 hover:underline font-mono text-sm"
         >
           {value}
         </button>
       ),
       width: 140,
-      filter: { type: 'text' as const, placeholder: 'Search loan ID...' }
+      sortable: true,
     },
     {
       id: 'customer_name',
       label: 'Customer Name',
-      accessor: (row: MyLoan) => row.customer_name,
-      width: 220,
-      filter: { type: 'text' as const, placeholder: 'Search customer...' }
+      accessor: (row: Loan) => row.customer_name,
+      width: 200,
+      sortable: true,
     },
     {
       id: 'phone_number',
       label: 'Phone',
-      accessor: (row: MyLoan) => row.phone_number,
+      accessor: (row: Loan) => row.phone_number,
       width: 120,
-      filter: { type: 'text' as const, placeholder: 'Search phone...' }
-    },
-    {
-      id: 'registration_number',
-      label: 'Registration',
-      accessor: (row: MyLoan) => row.registration_number || '-',
-      width: 120,
-      filter: { type: 'text' as const, placeholder: 'Search reg number...' }
     },
     {
       id: 'total_amount',
       label: 'Total Amount',
-      accessor: (row: MyLoan) => row.total_amount,
+      accessor: (row: Loan) => row.total_amount,
       Cell: (value: string) => (
-        <span className="font-medium text-gray-900">KSh {parseFloat(value).toLocaleString()}</span>
+        <span className="font-medium">KSh {parseFloat(value).toLocaleString()}</span>
       ),
       width: 130,
-      filter: { type: 'number_range' as const, placeholder: 'Amount' }
+      sortable: true,
+    },
+    {
+      id: 'total_outstanding',
+      label: 'Outstanding',
+      accessor: (row: Loan) => row.total_outstanding,
+      Cell: (value: string, row: Loan) => {
+        const outstanding = parseFloat(value);
+        const total = parseFloat(row.total_amount);
+        const percentage = total > 0 ? (outstanding / total) * 100 : 0;
+        
+        return (
+          <div>
+            <span className={outstanding > 0 ? 'text-amber-700 font-medium' : 'text-green-700'}>
+              KSh {outstanding.toLocaleString()}
+            </span>
+            {outstanding > 0 && (
+              <span className="text-xs text-gray-500 ml-1">
+                ({percentage.toFixed(1)}%)
+              </span>
+            )}
+          </div>
+        );
+      },
+      width: 150,
+      sortable: true,
     },
     {
       id: 'current_month_total_due',
-      label: 'Outstanding Cumulative',
-      accessor: (row: MyLoan) => row.current_month_total_due,
-      Cell: (value: string, row: MyLoan) => {
-        const outstanding = parseFloat(value);
+      label: 'Current Month Due',
+      accessor: (row: Loan) => row.current_month_total_due,
+      Cell: (value: string) => {
+        const amount = parseFloat(value || '0');
         return (
-          <span className={outstanding > 0 ? 'text-amber-700 font-medium' : 'text-green-700'}>
-            KSh {outstanding.toLocaleString()}
+          <span className={amount > 0 ? 'text-amber-700 font-medium' : 'text-green-700'}>
+            KSh {amount.toLocaleString()}
           </span>
         );
       },
       width: 140,
-      filter: { type: 'number_range' as const, placeholder: 'Outstanding' }
     },
     {
       id: 'current_month_installment_due_date',
-      label: 'Current Month Due',
-      accessor: (row: MyLoan) => row.current_month_installment_due_date,
+      label: 'Due Date',
+      accessor: (row: Loan) => row.current_month_installment_due_date,
       Cell: (value: string) => {
         if (!value) return <span className="text-gray-400">No current month</span>;
         const dueDate = new Date(value);
@@ -458,35 +704,36 @@ export default function MyLoansPage() {
         const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         
         let colorClass = 'text-gray-600';
-        let bgClass = '';
+        if (daysUntilDue < 0) colorClass = 'text-red-700 font-medium';
+        else if (daysUntilDue <= 7) colorClass = 'text-orange-700';
         
         return (
-          <div className={`px-2 py-1 rounded-md ${bgClass} ${colorClass} font-medium`}>
+          <div className={colorClass}>
             {dueDate.toLocaleDateString()}
-            <span className="text-xs block mt-0.5">
+            <span className="text-xs block">
               {daysUntilDue < 0 ? `${Math.abs(daysUntilDue)} days overdue` : `${daysUntilDue} days left`}
             </span>
           </div>
         );
       },
       width: 130,
-      filter: { type: 'date_range' as const, placeholder: 'Due date' }
     },
     {
       id: 'status',
       label: 'Status',
-      accessor: (row: MyLoan) => {
-        const isOverdue = row.current_month_installment_due_date  ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment=== true : false;
-        const hasOutstanding = parseFloat(row.current_month_total_due) > 0;
+      accessor: (row: Loan) => {
+        const isOverdue = row.current_month_installment_due_date ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due || '0') > 0 && row.has_current_month_installment === true : false;
+        const hasOutstanding = parseFloat(row.current_month_total_due || '0') > 0;
         if (row.has_current_month_installment === false) return 'Undue';
         if (hasOutstanding && isOverdue) return 'Overdue';
         if (hasOutstanding) return 'Current';
         return 'Paid';
       },
-      Cell: (value: string, row: MyLoan) => {
-        const isOverdue = row.current_month_installment_due_date  ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due) > 0 && row.has_current_month_installment=== true : false;
-        const hasOutstanding = parseFloat(row.current_month_total_due) > 0;
-        if(row.has_current_month_installment === false) {
+      Cell: (value: string, row: Loan) => {
+        const isOverdue = row.current_month_installment_due_date ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due || '0') > 0 && row.has_current_month_installment === true : false;
+        const hasOutstanding = parseFloat(row.current_month_total_due || '0') > 0;
+        
+        if (row.has_current_month_installment === false) {
           return (
             <Badge variant="secondary" className="gap-1">
               <Calendar size={12} /> Undue
@@ -514,844 +761,1117 @@ export default function MyLoansPage() {
         }
       },
       width: 100,
-      filter: {
-        type: 'choices' as const,
-        choices: ['Overdue', 'Current', 'Paid', 'Undue'],
-        placeholder: 'Status'
-      }
     },
     {
-      id: 'assigned_by_details',
-      label: 'Assigned By',
-      accessor: (row: MyLoan) => row.assigned_by_details?.username || 'System',
-      Cell: (value: string, row: MyLoan) => (
-        <span className="text-gray-600">{row.assigned_by_details?.username || 'System'}</span>
-      ),
-      width: 120,
+      id: 'collection_condition',
+      label: 'Collection Status',
+      accessor: (row: Loan) => row.collection_condition || 'collectable',
+      Cell: (value: string, row: Loan) => getCollectionConditionBadge(row.collection_condition),
+      width: 150,
+    },
+    {
+      id: 'to_repossess',
+      label: 'Repossession',
+      accessor: (row: Loan) => row.to_repossess,
+      Cell: (value: boolean, row: Loan) => {
+        if (row.to_repossess) {
+          return (
+            <Badge variant="error" className="gap-1 bg-red-100 text-red-800 border-red-200">
+              <Gavel size={12} />
+              Marked
+            </Badge>
+          );
+        }
+        if (row.actual_repossessed) {
+          return (
+            <Badge variant="warning" className="gap-1 bg-orange-100 text-orange-800 border-orange-200">
+              <Car size={12} />
+              Repossessed
+            </Badge>
+          );
+        }
+        return <span className="text-gray-400 text-sm">-</span>;
+      },
+      width: 100,
+    },
+    {
+      id: 'current_assigned_officer_details',
+      label: 'Assigned Officer',
+      accessor: (row: Loan) => row.current_assigned_officer_details,
+      Cell: (value: any) => {
+        if (!value) return <span className="text-gray-400 text-sm">Unassigned</span>;
+        return (
+          <span className="text-sm">
+            {value.username || `Officer ${value.id}`}
+          </span>
+        );
+      },
+      width: 130,
     },
     {
       id: 'assigned_at',
       label: 'Assigned On',
-      accessor: (row: MyLoan) => new Date(row.assigned_at).toLocaleDateString(),
+      accessor: (row: Loan) => row.assigned_at ? new Date(row.assigned_at).toLocaleDateString() : '-',
       width: 110,
-      filter: { type: 'date_range' as const, placeholder: 'Assigned date' }
+      sortable: true,
     },
     {
       id: 'actions',
       label: 'Actions',
-      accessor: (row: MyLoan) => row,
-      Cell: (value: MyLoan, row: MyLoan) => (
+      accessor: (row: Loan) => row,
+      Cell: (value: Loan) => (
         <div className="flex space-x-2">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => handleViewLoanDetails(row.loan_id)}
-                  className="text-blue-600 hover:text-blue-800 transition-colors p-1.5 rounded-full hover:bg-blue-50"
-                >
-                  <Eye size={16} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>View loan details</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => router.push(`/call-logs/new?loan=${row.loan_id}`)}
-                  className="text-green-600 hover:text-green-800 transition-colors p-1.5 rounded-full hover:bg-green-50"
-                >
-                  <Phone size={16} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Log a call</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <button
+            onClick={() => handleViewLoanDetails(value.loan_id)}
+            className="text-blue-600 hover:text-blue-700 transition-colors p-1 rounded hover:bg-blue-50"
+            title="View loan details"
+          >
+            <Eye size={16} />
+          </button>
+          <button
+            onClick={() => openEscalationModal(value)}
+            className="text-amber-600 hover:text-amber-700 transition-colors p-1 rounded hover:bg-amber-50"
+            title="Escalate loan"
+          >
+            <Flag size={16} />
+          </button>
         </div>
       ),
-      width: 100,
+      width: 80,
     },
   ];
 
-  const totalOutstanding = data.results.reduce((sum, loan) => sum + parseFloat(loan.current_month_total_due || '0'), 0);
-  const totalAmount = data.results.reduce((sum, loan) => sum + parseFloat(loan.total_amount || '0'), 0);
-  const collectedAmount = totalAmount - totalOutstanding;
-  const collectionRate = totalAmount === 0 ? 0 : (collectedAmount / totalAmount) * 100;
-  const overdueLoans = data.results.filter(loan => loan.is_overdue_status && parseFloat(loan.total_outstanding || '0') > 0).length;
-  const paidLoans = data.results.filter(loan => parseFloat(loan.total_outstanding || '0') === 0).length;
-  const repossessedLoans = 0
-
   return (
-    <div className="space-y-6 p-4 md:p-6 bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
-            My Assigned Loans
-          </h1>
-          <p className="text-gray-600 mt-1">Track and manage loans assigned to you for collection</p>
+          <h1 className="text-3xl font-bold text-gray-900">Loan Management</h1>
+          <p className="text-gray-600 mt-2">View and manage all loans in the system</p>
         </div>
         <div className="flex space-x-3">
-          <Button 
-            variant="outline" 
-            onClick={() => setShowAdvancedFilters(true)}
-            className="relative shadow-sm hover:shadow transition-all"
+          <ActionGuard
+            requirement="can_export_loans"
+            fallback={
+              <Button variant="outline" disabled className="opacity-50 cursor-not-allowed">
+                <Download size={20} className="mr-2" />
+                Export
+              </Button>
+            }
+            showTooltip
+            tooltipMessage="You need permission to export loans"
           >
-            <SlidersHorizontal size={18} className="mr-2" />
-            Filters
-            {activeFilterCount > 0 && (
-              <span className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center shadow-md">
-                {activeFilterCount}
-              </span>
-            )}
+            <Button variant="outline" onClick={handleExportLoans}>
+              <Download size={20} className="mr-2" />
+              Export
+            </Button>
+          </ActionGuard>
+          <Button variant="outline" onClick={openFilterModal}>
+            <Filter size={20} className="mr-2" />
+            Advanced Filters
           </Button>
-          <Button variant="outline" onClick={fetchMyLoans} className="shadow-sm hover:shadow transition-all">
-            <RefreshCw size={18} className="mr-2" />
+          <Button onClick={fetchLoans} className="bg-blue-600 hover:bg-blue-700">
+            <RefreshCw size={20} className="mr-2" />
             Refresh
           </Button>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
-        <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500 font-medium">Assigned Loans</p>
-                <p className="text-3xl font-bold text-gray-800 mt-1">{data.count}</p>
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center">
+              <div className="rounded-full bg-blue-100 p-3 mr-4">
+                <DollarSign className="h-6 w-6 text-blue-600" />
               </div>
-              <div className="bg-blue-100 p-3 rounded-full">
-                <Users className="h-6 w-6 text-blue-600" />
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Loans</p>
+                <p className="text-2xl font-bold text-gray-900">{totalCount}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-        {/* <Card className="overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 bg-white">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500 font-medium">Total Outstanding</p>
-                <p className="text-2xl font-bold text-gray-800 mt-1">
-                  KSh {totalOutstanding.toLocaleString()}
-                </p>
-              </div>
-              <div className="bg-amber-100 p-3 rounded-full">
-                <DollarSign className="h-6 w-6 text-amber-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card> */}
       </div>
 
-      {/* Advanced Filters Modal */}
-      {showAdvancedFilters && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <Filter className="h-5 w-5 text-blue-600" />
-                <h2 className="text-xl font-semibold text-gray-800">Advanced Filters</h2>
-                <Badge variant="secondary" className="ml-2">Enhanced</Badge>
-              </div>
-              <button
-                onClick={() => setShowAdvancedFilters(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors rounded-full p-1 hover:bg-gray-100"
-              >
-                <X size={24} />
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-6 space-y-8">
-              {/* Basic Information */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <Info size={18} className="text-blue-500" />
-                  Basic Information
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div>
-                    <Label htmlFor="loan_id">Loan ID</Label>
-                    <Input
-                      id="loan_id"
-                      placeholder="Search by loan ID"
-                      value={advancedFilters.loan_id}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, loan_id: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="customer_name">Customer Name</Label>
-                    <Input
-                      id="customer_name"
-                      placeholder="Search by customer name"
-                      value={advancedFilters.customer_name}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, customer_name: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="phone_number">Phone Number</Label>
-                    <Input
-                      id="phone_number"
-                      placeholder="Search by phone number"
-                      value={advancedFilters.phone_number}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, phone_number: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="registration_number">Registration Number</Label>
-                    <Input
-                      id="registration_number"
-                      placeholder="Search by registration number"
-                      value={advancedFilters.registration_number}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, registration_number: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="identity_num">ID Number</Label>
-                    <Input
-                      id="identity_num"
-                      placeholder="Search by ID number"
-                      value={advancedFilters.identity_num}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, identity_num: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                </div>
-              </section>
+      {/* Quick Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-gray-700">Quick Filters:</span>
+        {(Object.keys(filters).some(key => 
+          filters[key as keyof LoanFilters] !== undefined && 
+          filters[key as keyof LoanFilters] !== '' && 
+          key !== 'page' && 
+          key !== 'page_size' && 
+          key !== 'ordering' &&
+          key !== 'cumulative_balance_gt_zero'
+        )) && (
+          <Button variant="ghost" size="sm" onClick={resetFilters}>
+            Clear Filters
+          </Button>
+        )}
+      </div>
 
-              {/* Status & Flags */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <AlertCircle size={18} className="text-amber-500" />
-                  Status & Flags
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div>
-                    <Label htmlFor="status">Loan Status</Label>
-                    <Select
-                      value={advancedFilters.status || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, status: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Overdue">Overdue</SelectItem>
-                        <SelectItem value="Current">Current</SelectItem>
-                        <SelectItem value="Paid">Paid</SelectItem>
-                        <SelectItem value="Undue">Undue</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="current_month_only">Current Month Only</Label>
-                    <Select
-                      value={advancedFilters.current_month_only || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, current_month_only: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All Loans" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">Only Current Month Installment</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="cumulative_balance_gt_zero">Active Loans (Balance &gt; 0)</Label>
-                    <Select
-                      value={advancedFilters.cumulative_balance_gt_zero || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, cumulative_balance_gt_zero: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">Yes (Active Loans Only)</SelectItem>
-                        <SelectItem value="false">No (Show All)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-gray-500 mt-1">Default: Active loans with balance &gt; 0</p>
-                  </div>
-                </div>
-              </section>
-
-              {/* Escalation & Repossession Filters */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <Gavel size={18} className="text-red-500" />
-                  Repossession & Escalation
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div>
-                    <Label htmlFor="to_repossess">Marked for Repossession</Label>
-                    <Select
-                      value={advancedFilters.to_repossess || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, to_repossess: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">Yes</SelectItem>
-                        <SelectItem value="false">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="actual_repossessed">Actually Repossessed</Label>
-                    <Select
-                      value={advancedFilters.actual_repossessed || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, actual_repossessed: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">Yes</SelectItem>
-                        <SelectItem value="false">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="repossession_status">Repossession Status</Label>
-                    <Select
-                      value={advancedFilters.repossession_status || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_status: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All Statuses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {REPOSSESSION_STATUSES.map(status => (
-                          <SelectItem key={status.value} value={status.value}>
-                            {status.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="repossession_status_not">Exclude Repossession Status</Label>
-                    <Select
-                      value={advancedFilters.repossession_status_not || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_status_not: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="None" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {REPOSSESSION_STATUSES.map(status => (
-                          <SelectItem key={status.value} value={status.value}>
-                            Exclude {status.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="repossession_marked_has">Has Repossession Mark Date</Label>
-                    <Select
-                      value={advancedFilters.repossession_marked_has || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_marked_has: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">Yes</SelectItem>
-                        <SelectItem value="false">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="repossession_completed_has">Has Repossession Completion Date</Label>
-                    <Select
-                      value={advancedFilters.repossession_completed_has || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, repossession_completed_has: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">Yes</SelectItem>
-                        <SelectItem value="false">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <Label htmlFor="repossession_marked_after">Repossession Marked After</Label>
-                    <Input
-                      type="date"
-                      id="repossession_marked_after"
-                      value={advancedFilters.repossession_marked_after}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_marked_after: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="repossession_marked_before">Repossession Marked Before</Label>
-                    <Input
-                      type="date"
-                      id="repossession_marked_before"
-                      value={advancedFilters.repossession_marked_before}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_marked_before: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="repossession_completed_after">Repossession Completed After</Label>
-                    <Input
-                      type="date"
-                      id="repossession_completed_after"
-                      value={advancedFilters.repossession_completed_after}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_completed_after: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="repossession_completed_before">Repossession Completed Before</Label>
-                    <Input
-                      type="date"
-                      id="repossession_completed_before"
-                      value={advancedFilters.repossession_completed_before}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, repossession_completed_before: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Collection Condition Filters */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <ShieldAlert size={18} className="text-purple-500" />
-                  Collection Condition
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="collection_condition">Collection Condition</Label>
-                    <Select
-                      value={advancedFilters.collection_condition || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, collection_condition: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All Conditions" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {COLLECTION_CONDITIONS.map(condition => (
-                          <SelectItem key={condition.value} value={condition.value}>
-                            {condition.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="collection_condition_not">Exclude Collection Condition</Label>
-                    <Select
-                      value={advancedFilters.collection_condition_not || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, collection_condition_not: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="None" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {COLLECTION_CONDITIONS.map(condition => (
-                          <SelectItem key={condition.value} value={condition.value}>
-                            Exclude {condition.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </section>
-
-              {/* Auto Escalation Filters */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <Clock size={18} className="text-orange-500" />
-                  Auto Escalation (21+ Days Overdue)
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="auto_escalated_has">Has Auto Escalation</Label>
-                    <Select
-                      value={advancedFilters.auto_escalated_has || undefined}
-                      onValueChange={(value) => setAdvancedFilters({...advancedFilters, auto_escalated_has: value})}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">Yes</SelectItem>
-                        <SelectItem value="false">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <Label htmlFor="auto_escalated_after">Auto Escalated After</Label>
-                    <Input
-                      type="date"
-                      id="auto_escalated_after"
-                      value={advancedFilters.auto_escalated_after}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, auto_escalated_after: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="auto_escalated_before">Auto Escalated Before</Label>
-                    <Input
-                      type="date"
-                      id="auto_escalated_before"
-                      value={advancedFilters.auto_escalated_before}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, auto_escalated_before: e.target.value})}
-                      className="mt-1"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Amount Filters */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <DollarSign size={18} className="text-green-500" />
-                  Amount Filters
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <Label>Total Amount Range (KSh)</Label>
-                    <div className="flex space-x-2 mt-1">
-                      <Input
-                        type="number"
-                        placeholder="Min"
-                        value={advancedFilters.total_amount_min}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, total_amount_min: e.target.value})}
-                      />
-                      <Input
-                        type="number"
-                        placeholder="Max"
-                        value={advancedFilters.total_amount_max}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, total_amount_max: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <Label>Outstanding Amount Range (KSh)</Label>
-                    <div className="flex space-x-2 mt-1">
-                      <Input
-                        type="number"
-                        placeholder="Min"
-                        value={advancedFilters.outstanding_min}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, outstanding_min: e.target.value})}
-                      />
-                      <Input
-                        type="number"
-                        placeholder="Max"
-                        value={advancedFilters.outstanding_max}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, outstanding_max: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* Date Filters */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <CalendarRange size={18} className="text-purple-500" />
-                  Date Ranges
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div>
-                    <Label>Due Date</Label>
-                    <div className="flex space-x-2 mt-1">
-                      <Input type="date" placeholder="From" value={advancedFilters.due_date_after} onChange={(e) => setAdvancedFilters({...advancedFilters, due_date_after: e.target.value})} />
-                      <Input type="date" placeholder="To" value={advancedFilters.due_date_before} onChange={(e) => setAdvancedFilters({...advancedFilters, due_date_before: e.target.value})} />
-                    </div>
-                  </div>
-                  <div>
-                    <Label>Disbursement Date</Label>
-                    <div className="flex space-x-2 mt-1">
-                      <Input type="date" placeholder="From" value={advancedFilters.disburse_date_after} onChange={(e) => setAdvancedFilters({...advancedFilters, disburse_date_after: e.target.value})} />
-                      <Input type="date" placeholder="To" value={advancedFilters.disburse_date_before} onChange={(e) => setAdvancedFilters({...advancedFilters, disburse_date_before: e.target.value})} />
-                    </div>
-                  </div>
-                  <div>
-                    <Label>Assignment Date</Label>
-                    <div className="flex space-x-2 mt-1">
-                      <Input type="date" placeholder="From" value={advancedFilters.assigned_after} onChange={(e) => setAdvancedFilters({...advancedFilters, assigned_after: e.target.value})} />
-                      <Input type="date" placeholder="To" value={advancedFilters.assigned_before} onChange={(e) => setAdvancedFilters({...advancedFilters, assigned_before: e.target.value})} />
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* Call Log Filters */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <PhoneCall size={18} className="text-indigo-500" />
-                  Call Log Filters
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-1">
-                      <Plus size={14} /> Loans WITH call log created between
-                    </Label>
-                    <div className="flex space-x-2">
-                      <Input
-                        type="date"
-                        placeholder="From"
-                        value={advancedFilters.call_log_created_after}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, call_log_created_after: e.target.value})}
-                      />
-                      <Input
-                        type="date"
-                        placeholder="To"
-                        value={advancedFilters.call_log_created_before}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, call_log_created_before: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-1">
-                      <Minus size={14} /> Loans WITHOUT call log created between
-                    </Label>
-                    <div className="flex space-x-2">
-                      <Input
-                        type="date"
-                        placeholder="From"
-                        value={advancedFilters.without_call_log_created_after}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, without_call_log_created_after: e.target.value})}
-                      />
-                      <Input
-                        type="date"
-                        placeholder="To"
-                        value={advancedFilters.without_call_log_created_before}
-                        onChange={(e) => setAdvancedFilters({...advancedFilters, without_call_log_created_before: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* Current Installment Due Date (Month-Day) */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <CalendarDays size={18} className="text-teal-500" />
-                  Current Installment Due Date (Month-Day only)
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label>Start (DD/MM)</Label>
-                    <Input
-                      placeholder="e.g., 01/12"
-                      value={advancedFilters.current_installment_due_date_start}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, current_installment_due_date_start: e.target.value})}
-                      className="font-mono"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Example: 01/12 for 1st December</p>
-                  </div>
-                  <div>
-                    <Label>End (DD/MM)</Label>
-                    <Input
-                      placeholder="e.g., 10/12"
-                      value={advancedFilters.current_installment_due_date_end}
-                      onChange={(e) => setAdvancedFilters({...advancedFilters, current_installment_due_date_end: e.target.value})}
-                      className="font-mono"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Sort Order */}
-              <section>
-                <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <TrendingUp size={18} className="text-gray-500" />
-                  Sort Order
-                </h3>
-                <div className="max-w-md">
-                  <Select
-                    value={advancedFilters.ordering}
-                    onValueChange={(value) => setAdvancedFilters({...advancedFilters, ordering: value})}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="-disburse_time">Newest First</SelectItem>
-                      <SelectItem value="disburse_time">Oldest First</SelectItem>
-                      <SelectItem value="-due_date">Due Date (Newest First)</SelectItem>
-                      <SelectItem value="due_date">Due Date (Oldest First)</SelectItem>
-                      <SelectItem value="-total_amount">Amount (Highest First)</SelectItem>
-                      <SelectItem value="total_amount">Amount (Lowest First)</SelectItem>
-                      <SelectItem value="-total_outstanding">Outstanding (Highest First)</SelectItem>
-                      <SelectItem value="total_outstanding">Outstanding (Lowest First)</SelectItem>
-                      <SelectItem value="-assigned_at">Recently Assigned</SelectItem>
-                      <SelectItem value="assigned_at">Oldest Assigned</SelectItem>
-                      <SelectItem value="-to_repossess">Repossession Marked First</SelectItem>
-                      <SelectItem value="-auto_escalated_at">Auto Escalated First</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </section>
-            </div>
-
-            <div className="sticky bottom-0 bg-gray-50 border-t px-6 py-4 flex flex-wrap justify-end gap-3">
-              <Button variant="outline" onClick={() => { resetAdvancedFilters(); applyAdvancedFilters(); }} className="hover:bg-gray-100">
-                Reset All
-              </Button>
-              <Button variant="outline" onClick={() => setShowAdvancedFilters(false)}>
-                Cancel
-              </Button>
-              <Button onClick={applyAdvancedFilters} className="bg-blue-600 hover:bg-blue-700">
-                Apply Filters
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Active Filters Display */}
-      {activeFilterCount > 0 && (
-        <div className="flex flex-wrap items-center gap-2 p-3 bg-white rounded-xl shadow-sm border">
-          <span className="text-sm text-gray-600 font-medium flex items-center gap-1">
-            <Filter size={14} /> Active filters:
-          </span>
-          
-          {searchTerm && (
-            <Badge variant="secondary" className="gap-1 pl-2 pr-1 py-1">
-              Search: {searchTerm}
-              <button onClick={() => setSearchTerm('')} className="ml-1 hover:text-red-600">
-                <X size={12} />
-              </button>
-            </Badge>
-          )}
-          
-          {Object.entries(filters).map(([key, value]) => {
-            if (!value || value === '') return null;
-            
-            let label = key.replace(/_/g, ' ').replace(/(min|max|after|before)/g, (m) => ` ${m}`);
-            if (key === 'call_log_created_after') label = 'Call log after';
-            if (key === 'call_log_created_before') label = 'Call log before';
-            if (key === 'without_call_log_created_after') label = 'No call log after';
-            if (key === 'without_call_log_created_before') label = 'No call log before';
-            if (key === 'current_installment_due_date_start') label = 'Due date start (MM-DD)';
-            if (key === 'current_installment_due_date_end') label = 'Due date end (MM-DD)';
-            if (key === 'cumulative_balance_gt_zero') label = 'Active Loans Only';
-            if (key === 'actual_repossessed') label = 'Actually Repossessed';
-            if (key === 'auto_escalated_after') label = 'Auto escalated after';
-            if (key === 'auto_escalated_before') label = 'Auto escalated before';
-            if (key === 'auto_escalated_has') label = 'Has Auto Escalation';
-            if (key === 'collection_condition') label = 'Collection Condition';
-            if (key === 'collection_condition_not') label = 'Exclude Collection';
-            if (key === 'repossession_completed_after') label = 'Repossession completed after';
-            if (key === 'repossession_completed_before') label = 'Repossession completed before';
-            if (key === 'repossession_completed_has') label = 'Has Completion Date';
-            if (key === 'repossession_marked_after') label = 'Repossession marked after';
-            if (key === 'repossession_marked_before') label = 'Repossession marked before';
-            if (key === 'repossession_marked_has') label = 'Has Mark Date';
-            if (key === 'repossession_status') label = 'Repossession Status';
-            if (key === 'repossession_status_not') label = 'Exclude Repossession';
-            if (key === 'to_repossess') label = 'Marked for Repossession';
-            
-            let displayValue = value;
-            if (key === 'is_overdue') displayValue = value === 'true' ? 'Overdue' : 'Not Overdue';
-            if (key === 'current_month_only') displayValue = 'Yes';
-            if (key === 'to_repossess') displayValue = value === 'true' ? 'Yes' : 'No';
-            if (key === 'actual_repossessed') displayValue = value === 'true' ? 'Yes' : 'No';
-            if (key === 'cumulative_balance_gt_zero') displayValue = value === 'true' ? 'Active Only' : 'All Loans';
-            if (key === 'auto_escalated_has') displayValue = value === 'true' ? 'Yes' : 'No';
-            if (key === 'repossession_marked_has') displayValue = value === 'true' ? 'Yes' : 'No';
-            if (key === 'repossession_completed_has') displayValue = value === 'true' ? 'Yes' : 'No';
-            
-            if (key === 'collection_condition' && value) {
-              const found = COLLECTION_CONDITIONS.find(c => c.value === value);
-              if (found) displayValue = found.label;
-            }
-            
-            if (key === 'repossession_status' && value && !value.includes(',')) {
-              const found = REPOSSESSION_STATUSES.find(s => s.value === value);
-              if (found) displayValue = found.label;
-            }
-            
-            const isDefaultFilter = key === 'cumulative_balance_gt_zero' && value === 'true';
-            
-            return (
-              <Badge 
-                key={key} 
-                variant="outline" 
-                className={`gap-1 pl-2 pr-1 py-1 ${isDefaultFilter ? 'bg-green-50 text-green-800 border-green-200' : 'bg-blue-50 text-blue-800 border-blue-200'}`}
-              >
-                {label}: {displayValue}
-                <button
-                  onClick={() => {
-                    setFilters(prev => {
-                      const newFilters = { ...prev };
-                      delete newFilters[key as keyof FilterState];
-                      return newFilters;
-                    });
-                  }}
-                  className="ml-1 hover:text-red-600"
-                >
-                  <X size={12} />
-                </button>
-              </Badge>
-            );
-          })}
-          
-          <button
-            onClick={clearFilters}
-            className="text-sm text-blue-600 hover:text-blue-800 ml-auto underline-offset-2 hover:underline"
-          >
-            Clear all
-          </button>
-        </div>
-      )}
+      {/* Search Bar */}
+      <div className="relative">
+        <input
+          type="text"
+          placeholder="Search by customer name, phone number, loan ID, registration number, or identity number..."
+          value={filters.search || ''}
+          onChange={(e) => handleFilterChange('search', e.target.value)}
+          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+      </div>
 
       {/* Loans Table */}
-      <Card className="border-0 shadow-xl overflow-hidden">
-        <CardHeader className="bg-white border-b px-6 py-4">
+      <Card>
+        <CardHeader>
           <div className="flex items-center justify-between w-full">
-            <h2 className="text-xl font-semibold text-gray-800">Loan Assignments</h2>
-            {isLoading && <RefreshCw size={18} className="animate-spin text-gray-400" />}
+            <h2 className="text-xl font-semibold text-gray-900">All Loans</h2>
+            <div className="text-sm text-gray-600">
+              Showing {totalCount > 0 ? ((filters.page - 1) * filters.page_size) + 1 : 0} - {Math.min(filters.page * filters.page_size, totalCount)} of {totalCount} loans
+            </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
-          <GenericTable
-            data={data.results}
-            columns={columns}
-            rowKey={(row: MyLoan) => row.id}
-            selectionMode="none"
-            virtualized={true}
-            pagination={{
-              totalCount: data.count,
-              currentPage: data.page,
-              pageSize: data.page_size,
-              onPageChange: (newPage) => setPage(newPage as number),
-              serverSide: true,
-              hasNextPage: data.page < data.total_pages,
-              hasPreviousPage: data.page > 1
-            }}
-            serverSideSearch={searchTerm}
-            onServerSearchChange={handleServerSearchChange}
-            serverSideFilters={filters}
-            onServerFilterChange={handleServerFilterChange}
-            wrapText={true}
-            className="rounded-b-xl"
-          />
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="text-lg text-gray-600">Loading loans...</div>
+            </div>
+          ) : (
+            <GenericTable
+              data={loans}
+              columns={columns}
+              rowKey={(row: Loan) => row.id}
+              selectionMode="none"
+              virtualized={true}
+              pagination={{
+                totalCount,
+                currentPage: filters.page,
+                pageSize: filters.page_size,
+                onPageChange: handlePageChange,
+                onPageSizeChange: (newSize) => {
+                  setFilters(prev => ({ ...prev, page_size: newSize, page: 1 }));
+                },
+                hasNextPage: filters.page * filters.page_size < totalCount,
+                hasPreviousPage: filters.page > 1,
+                serverSide: true
+              }}
+              pageSizeOptions={[20, 50, 100, 500, 1000]}
+            />
+          )}
         </CardContent>
       </Card>
+
+      {/* ============ ESCALATION MODAL ============ */}
+      <Modal
+        isOpen={isEscalationModalOpen}
+        onClose={() => {
+          setIsEscalationModalOpen(false);
+          setEscalationError(null);
+          setEscalationSuccess(null);
+        }}
+        title={`Escalate Loan: ${selectedLoan?.loan_id || ''}`}
+        size="lg"
+      >
+        <div className="space-y-6 max-h-[70vh] overflow-y-auto px-1">
+          {/* Loan Info Summary */}
+          {selectedLoan && (
+            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div><span className="font-medium">Customer:</span> {selectedLoan.customer_name}</div>
+                <div><span className="font-medium">Phone:</span> {selectedLoan.phone_number}</div>
+                <div><span className="font-medium">Outstanding:</span> KSh {parseFloat(selectedLoan.total_outstanding).toLocaleString()}</div>
+                <div><span className="font-medium">Current Collection:</span> {getCollectionConditionBadge(selectedLoan.collection_condition)}</div>
+                {selectedLoan.yard_location && (
+                  <div className="col-span-2">
+                    <span className="font-medium">Current Yard:</span> {selectedLoan.yard_location.name} - {selectedLoan.yard_location.location}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Escalation Form */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Escalation Details</h3>
+            
+            {/* Reason */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Escalation Reason <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={escalationData.reason}
+                onChange={(e) => setEscalationData(prev => ({ ...prev, reason: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="">Select a reason...</option>
+                {ESCALATION_REASONS.map(reason => (
+                  <option key={reason.value} value={reason.value}>{reason.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Reason Details */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Reason Details
+              </label>
+              <textarea
+                value={escalationData.reason_details || ''}
+                onChange={(e) => setEscalationData(prev => ({ ...prev, reason_details: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={2}
+                placeholder="Provide additional details about the escalation reason..."
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* Repossession */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <div className="flex items-center gap-2">
+                    <Gavel size={16} className="text-red-500" />
+                    Mark for Repossession
+                  </div>
+                </label>
+                <select
+                  value={escalationData.to_repossess ? 'true' : 'false'}
+                  onChange={(e) => setEscalationData(prev => ({ ...prev, to_repossess: e.target.value === 'true' }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
+              </div>
+
+              {/* Repossession Status */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Status
+                </label>
+                <select
+                  value={escalationData.new_repossession_status || ''}
+                  onChange={(e) => setEscalationData(prev => ({ ...prev, new_repossession_status: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">No Change</option>
+                  {REPOSSESSION_STATUSES.map(status => (
+                    <option key={status.value} value={status.value}>{status.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Collection Condition */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Collection Condition
+              </label>
+              <select
+                value={escalationData.new_collection_condition || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setEscalationData(prev => ({ ...prev, new_collection_condition: value || undefined }));
+                  setShowYardFields(value === 'in_yard');
+                  if (value !== 'in_yard') {
+                    setEscalationData(prev => ({ ...prev, yard_location_id: undefined, yard_notes: '' }));
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">No Change</option>
+                {COLLECTION_CONDITIONS.map(condition => (
+                  <option key={condition.value} value={condition.value}>{condition.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Yard Fields - Shown when IN_YARD is selected */}
+            {showYardFields && (
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium text-blue-900 flex items-center gap-2">
+                    <Warehouse size={18} />
+                    Yard Location Details
+                  </h4>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={openYardModal}
+                    className="text-blue-600 border-blue-300 hover:bg-blue-100"
+                  >
+                    <Plus size={14} className="mr-1" />
+                    New Yard
+                  </Button>
+                </div>
+
+                {/* Yard Location Dropdown */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Select Yard <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={escalationData.yard_location_id || ''}
+                    onChange={(e) => setEscalationData(prev => ({ 
+                      ...prev, 
+                      yard_location_id: e.target.value ? parseInt(e.target.value) : undefined 
+                    }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="">Select a yard...</option>
+                    {yardLocations.filter(y => y.is_active).map(yard => (
+                      <option key={yard.id} value={yard.id}>
+                        {yard.name} - {yard.location}
+                      </option>
+                    ))}
+                  </select>
+                  {yardLocations.filter(y => y.is_active).length === 0 && (
+                    <p className="text-sm text-amber-600 mt-1">
+                      No yards available. Please create a yard location first.
+                    </p>
+                  )}
+                </div>
+
+                {/* Selected Yard Info */}
+                {escalationData.yard_location_id && (
+                  <div className="bg-white p-3 rounded border border-gray-200 text-sm space-y-1">
+                    {(() => {
+                      const selected = yardLocations.find(y => y.id === escalationData.yard_location_id);
+                      if (!selected) return null;
+                      return (
+                        <>
+                          <div className="flex items-center gap-2 text-gray-700">
+                            <MapPin size={14} />
+                            <span className="font-medium">{selected.name}</span>
+                          </div>
+                          <div className="text-gray-600 pl-6">{selected.location}</div>
+                          {selected.contact_person && (
+                            <div className="text-gray-600 pl-6 flex items-center gap-2">
+                              <User size={14} />
+                              {selected.contact_person}
+                            </div>
+                          )}
+                          {selected.contact_phone && (
+                            <div className="text-gray-600 pl-6 flex items-center gap-2">
+                              <Phone size={14} />
+                              {selected.contact_phone}
+                            </div>
+                          )}
+                          {selected.notes && (
+                            <div className="text-gray-500 pl-6 text-xs italic">{selected.notes}</div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Yard Notes */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Yard Notes
+                  </label>
+                  <textarea
+                    value={escalationData.yard_notes || ''}
+                    onChange={(e) => setEscalationData(prev => ({ ...prev, yard_notes: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows={2}
+                    placeholder="Special instructions, contact person at yard, etc."
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Request Notes */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Additional Notes
+              </label>
+              <textarea
+                value={escalationData.request_notes || ''}
+                onChange={(e) => setEscalationData(prev => ({ ...prev, request_notes: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={2}
+                placeholder="Any additional notes about this escalation request..."
+              />
+            </div>
+          </div>
+
+          {/* Error/Success Messages */}
+          {escalationError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-start gap-2">
+              <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
+              <span>{escalationError}</span>
+            </div>
+          )}
+          {escalationSuccess && (
+            <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-start gap-2">
+              <CheckCircle size={18} className="mt-0.5 flex-shrink-0" />
+              <span>{escalationSuccess}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end space-x-3 pt-6 border-t mt-4">
+          <Button 
+            variant="outline" 
+            onClick={() => {
+              setIsEscalationModalOpen(false);
+              setEscalationError(null);
+              setEscalationSuccess(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleEscalationSubmit} 
+            disabled={isSubmittingEscalation || !escalationData.reason}
+            className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50"
+          >
+            {isSubmittingEscalation ? 'Submitting...' : 'Create Escalation Request'}
+          </Button>
+        </div>
+      </Modal>
+
+      {/* ============ YARD MANAGEMENT MODAL ============ */}
+      <Modal
+        isOpen={isYardModalOpen}
+        onClose={() => {
+          setIsYardModalOpen(false);
+          setYardError(null);
+        }}
+        title="Create New Yard Location"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Yard Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={yardFormData.name}
+              onChange={(e) => setYardFormData(prev => ({ ...prev, name: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., DT Dobie Yard"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Location <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={yardFormData.location}
+              onChange={(e) => setYardFormData(prev => ({ ...prev, location: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., Westlands, Nairobi"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Contact Person
+            </label>
+            <input
+              type="text"
+              value={yardFormData.contact_person}
+              onChange={(e) => setYardFormData(prev => ({ ...prev, contact_person: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., John Doe"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Contact Phone
+            </label>
+            <input
+              type="text"
+              value={yardFormData.contact_phone}
+              onChange={(e) => setYardFormData(prev => ({ ...prev, contact_phone: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., +254 700 000000"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Notes
+            </label>
+            <textarea
+              value={yardFormData.notes}
+              onChange={(e) => setYardFormData(prev => ({ ...prev, notes: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows={2}
+              placeholder="Any additional notes about this yard..."
+            />
+          </div>
+
+          {yardError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-start gap-2">
+              <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
+              <span>{yardError}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end space-x-3 pt-6 border-t mt-4">
+          <Button 
+            variant="outline" 
+            onClick={() => {
+              setIsYardModalOpen(false);
+              setYardError(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleCreateYard} 
+            disabled={isSubmittingYard || !yardFormData.name || !yardFormData.location}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSubmittingYard ? 'Creating...' : 'Create Yard'}
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Advanced Filters Modal - Keep existing */}
+      <Modal
+        isOpen={isFilterModalOpen}
+        onClose={() => setIsFilterModalOpen(false)}
+        title="Advanced Filters"
+        size="lg"
+      >
+        <div className="space-y-6 max-h-[70vh] overflow-y-auto px-1">
+          {/* ... (existing filter content) ... */}
+          {/* Basic Info Filters */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Basic Information</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Officer ID
+                </label>
+                <input
+                  type="text"
+                  value={tempFilters.officer_id || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, officer_id: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Enter officer ID"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Officer Username
+                </label>
+                <input
+                  type="text"
+                  value={tempFilters.officer_username || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, officer_username: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Enter username"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Loan ID
+                </label>
+                <input
+                  type="text"
+                  value={tempFilters.loan_id || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, loan_id: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Enter loan ID"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Registration Number
+                </label>
+                <input
+                  type="text"
+                  value={tempFilters.registration_number || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, registration_number: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Enter registration number"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Identity Number
+                </label>
+                <input
+                  type="text"
+                  value={tempFilters.identity_num || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, identity_num: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Enter ID number"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Status Filters */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Status & Flags</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Loan Status
+                </label>
+                <select
+                  value={tempFilters.status || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, status: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="Overdue">Overdue</option>
+                  <option value="Current">Current</option>
+                  <option value="Paid">Paid</option>
+                  <option value="Undue">Undue</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Overdue Status
+                </label>
+                <select
+                  value={tempFilters.is_overdue === undefined ? '' : String(tempFilters.is_overdue)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      is_overdue: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">All Loans</option>
+                  <option value="true">Overdue Only</option>
+                  <option value="false">Not Overdue</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Active Loans (Balance &gt; 0)
+                </label>
+                <select
+                  value={tempFilters.cumulative_balance_gt_zero === undefined ? '' : String(tempFilters.cumulative_balance_gt_zero)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      cumulative_balance_gt_zero: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="true">Yes (Active Only)</option>
+                  <option value="false">No (Show All)</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Default: Active loans with balance &gt; 0</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Current Month Only
+                </label>
+                <div className="flex items-center mt-2">
+                  <input
+                    type="checkbox"
+                    id="current_month_only_filter"
+                    checked={tempFilters.current_month_only || false}
+                    onChange={(e) => setTempFilters(prev => ({ ...prev, current_month_only: e.target.checked }))}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="current_month_only_filter" className="ml-2 block text-sm text-gray-900">
+                    Only show current month installments
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="assigned_only"
+                  checked={tempFilters.assigned_only || false}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, assigned_only: e.target.checked || undefined }))}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label htmlFor="assigned_only" className="ml-2 block text-sm text-gray-900">
+                  Assigned Only
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="unassigned_only"
+                  checked={tempFilters.unassigned_only || false}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, unassigned_only: e.target.checked || undefined }))}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label htmlFor="unassigned_only" className="ml-2 block text-sm text-gray-900">
+                  Unassigned Only
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Repossession & Escalation Filters */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2 flex items-center gap-2">
+              <Gavel size={16} className="text-red-500" />
+              Repossession & Escalation
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Marked for Repossession
+                </label>
+                <select
+                  value={tempFilters.to_repossess === undefined ? '' : String(tempFilters.to_repossess)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      to_repossess: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Actually Repossessed
+                </label>
+                <select
+                  value={tempFilters.actual_repossessed === undefined ? '' : String(tempFilters.actual_repossessed)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      actual_repossessed: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Status
+                </label>
+                <select
+                  value={tempFilters.repossession_status || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_status: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">All Statuses</option>
+                  {REPOSSESSION_STATUSES.map(status => (
+                    <option key={status.value} value={status.value}>{status.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Collection Condition
+                </label>
+                <select
+                  value={tempFilters.collection_condition || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, collection_condition: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">All Conditions</option>
+                  {COLLECTION_CONDITIONS.map(condition => (
+                    <option key={condition.value} value={condition.value}>{condition.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Has Auto Escalation
+                </label>
+                <select
+                  value={tempFilters.auto_escalated_has === undefined ? '' : String(tempFilters.auto_escalated_has)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      auto_escalated_has: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Has Repossession Mark Date
+                </label>
+                <select
+                  value={tempFilters.repossession_marked_has === undefined ? '' : String(tempFilters.repossession_marked_has)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTempFilters(prev => ({ 
+                      ...prev, 
+                      repossession_marked_has: value === '' ? undefined : value === 'true'
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Marked After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_marked_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_marked_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Marked Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_marked_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_marked_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Completed After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_completed_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_completed_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Repossession Completed Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.repossession_completed_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, repossession_completed_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Auto Escalated After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.auto_escalated_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, auto_escalated_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Auto Escalated Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.auto_escalated_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, auto_escalated_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Amount Filters */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Amount Ranges</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Total Amount Min
+                </label>
+                <input
+                  type="number"
+                  value={tempFilters.total_amount_min || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, total_amount_min: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Min amount"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Total Amount Max
+                </label>
+                <input
+                  type="number"
+                  value={tempFilters.total_amount_max || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, total_amount_max: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Max amount"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Outstanding Min
+                </label>
+                <input
+                  type="number"
+                  value={tempFilters.outstanding_min || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, outstanding_min: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Min outstanding"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Outstanding Max
+                </label>
+                <input
+                  type="number"
+                  value={tempFilters.outstanding_max || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, outstanding_max: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Max outstanding"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Date Filters */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Date Ranges</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Disburse Date After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.disburse_date_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, disburse_date_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Disburse Date Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.disburse_date_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, disburse_date_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Due Date After
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.due_date_after || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, due_date_after: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Due Date Before
+                </label>
+                <input
+                  type="date"
+                  value={tempFilters.due_date_before || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, due_date_before: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Sorting */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Sorting</h3>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Order By
+              </label>
+              <select
+                value={tempFilters.ordering || '-disburse_time'}
+                onChange={(e) => setTempFilters(prev => ({ ...prev, ordering: e.target.value || undefined }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              >
+                <option value="-disburse_time">Disburse Time (Newest first)</option>
+                <option value="disburse_time">Disburse Time (Oldest first)</option>
+                <option value="-due_date">Due Date (Latest first)</option>
+                <option value="due_date">Due Date (Earliest first)</option>
+                <option value="-total_amount">Total Amount (Highest first)</option>
+                <option value="total_amount">Total Amount (Lowest first)</option>
+                <option value="-total_outstanding">Outstanding (Highest first)</option>
+                <option value="total_outstanding">Outstanding (Lowest first)</option>
+                <option value="customer_name">Customer Name (A-Z)</option>
+                <option value="-customer_name">Customer Name (Z-A)</option>
+                <option value="-to_repossess">Repossession Marked First</option>
+                <option value="-auto_escalated_at">Auto Escalated First</option>
+                <option value="-collection_condition">Collection Status</option>
+                <option value="-repossession_status">Repossession Status</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end space-x-3 pt-6 border-t mt-4">
+          <Button variant="outline" onClick={() => {
+            setTempFilters({ ...filters });
+            setIsFilterModalOpen(false);
+          }}>
+            Cancel
+          </Button>
+          <Button variant="outline" onClick={() => {
+            setTempFilters({
+              page: 1,
+              page_size: 20,
+              ordering: '-disburse_time',
+              current_month_only: false,
+              cumulative_balance_gt_zero: true
+            });
+          }}>
+            Reset
+          </Button>
+          <Button onClick={applyAdvancedFilters} className="bg-blue-600 hover:bg-blue-700">
+            Apply Filters
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

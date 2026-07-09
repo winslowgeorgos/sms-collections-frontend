@@ -634,38 +634,7 @@ export default function AssignedLoansPage() {
             </div>
           </CardContent>
         </Card>
-        
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center">
-              <div className="rounded-full bg-purple-100 p-3 mr-4">
-                <DollarSign className="h-6 w-6 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Cumulative Balance</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  KSh {data.assignment_metrics.total_assigned_cumulative_balance?.toLocaleString() ?? '0'}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center">
-              <div className="rounded-full bg-green-100 p-3 mr-4">
-                <TrendingUp className="h-6 w-6 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Average Balance</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  KSh {data.assignment_metrics.average_assigned_balance?.toLocaleString() ?? '0'}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+
 
         <Card>
           <CardContent className="pt-6">
@@ -761,14 +730,19 @@ export default function AssignedLoansPage() {
                 }
               }}
               pagination={{
-                totalCount: data.count,
+                totalCount:data.count,
                 currentPage: data.page,
                 pageSize: data.page_size,
                 onPageChange: handlePageChange,
-                hasNextPage: data.page < data.total_pages,
+                onPageSizeChange: (newSize) => {
+                  setFilters(prev => ({ ...prev, page_size: newSize, page: 1 }));
+                },
+                hasNextPage: data.page * data.page_size < data.count,
                 hasPreviousPage: data.page > 1,
                 serverSide: true
               }}
+              pageSizeOptions={[20, 50, 100, 500, 1000]} // optional, matches default
+              
               virtualized={true}
             />
           )}

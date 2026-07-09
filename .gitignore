@@ -41,3 +41,4 @@ yarn-error.log*
 next-env.d.ts
 src/lib/constants.ts
 scheduler_log.txt
+src/lib/constants.ts

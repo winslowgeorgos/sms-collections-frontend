@@ -711,15 +711,22 @@ export default function PaymentRemindersPage() {
               rowKey={(row: PaymentReminder) => row.id}
               selectionMode="none"
               virtualized={true}
+       
+
               pagination={{
                 totalCount,
                 currentPage: filters.page,
                 pageSize: filters.page_size,
                 onPageChange: handlePageChange,
-                serverSide: true,
-                hasNextPage: filters.page < Math.ceil(totalCount / filters.page_size),
+                onPageSizeChange: (newSize) => {
+                  setFilters(prev => ({ ...prev, page_size: newSize, page: 1 }));
+                },
+                hasNextPage: filters.page * filters.page_size < totalCount,
                 hasPreviousPage: filters.page > 1,
+                serverSide: true
               }}
+              pageSizeOptions={[20, 50, 100, 500, 1000]} // optional, matches default
+
             />
           )}
         </CardContent>

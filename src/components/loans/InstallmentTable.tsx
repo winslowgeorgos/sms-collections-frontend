@@ -381,7 +381,7 @@ const InstallmentRow = ({
             </div>
             <div>
               <div className="text-xs text-gray-500">Cumulative</div>
-              <div className="font-semibold text-gray-700">{formatCurrency(installment.cumulative_balance)}</div>
+              <div className="font-semibold text-gray-700">{installment?.is_current_month ? formatCurrency(installment.cumulative_balance) : installment?.cumulative_balance >= 0 ? installment?.cumulative_balance : 0 }</div>
             </div>
           </div>
 

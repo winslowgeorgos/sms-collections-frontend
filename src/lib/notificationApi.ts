@@ -7,5 +7,4 @@ export const notificationApi = {
   markAllAsRead: () => apiClient.post('/mark_all_read/'),
   markDelivered: (ids: string[]) => apiClient.post('/mark_delivered/', { ids }),
   getUnreadCount: () => apiClient.get('/unread_count/'),
-  
 };

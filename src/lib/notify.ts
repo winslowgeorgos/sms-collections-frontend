@@ -1,6 +1,6 @@
 // lib/api.ts
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
-import { NOTIFY_BASE_URL, AUTH_TOKEN_KEY, USER_KEY,   } from './constants';
+import { OUT_NOTIFY_BASE_URL, NOTIFY_BASE_URL, AUTH_TOKEN_KEY, USER_KEY,   } from './constants';
 import { AuthTokens, UserDetailsResponse } from '@/types';
 
 // Helper function to determine which base URL to use
@@ -10,7 +10,7 @@ const getBaseUrl = (): string => {
     // Check if the browser route reads 10.24.1.1
     console.log("hostname : ", hostname)
     if (hostname === '10.24.1.1') {
-      return NOTIFY_BASE_URL;
+      return OUT_NOTIFY_BASE_URL;
     }
   }
   return NOTIFY_BASE_URL;
