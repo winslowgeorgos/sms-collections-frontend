@@ -29,13 +29,14 @@ import {
   CheckSquare,
   XCircle,
   Home,
-  BarChart
+  BarChart,
+  ShieldAlert, // Imported for Escalation Management icons
+  UserX
 } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import type { NavItemType } from '@/utils/config';
 import {getCurrentUserId} from '@/utils/user_navconfig'
-
 
 // Create a function that returns navigation items with dynamic routes
 export const getNavItemsWithSections = (userId?: number | null): Array<{ label: string; items: NavItemType[] }> => {
@@ -85,7 +86,6 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
             </Badge>
           ),
         },
-        
         {
           label: "My Loans",
           href: "/loan-processor/my-loans",
@@ -119,6 +119,31 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
       ],
     },
     {
+  label: "ESCALATION MANAGEMENT",
+  items: [
+    {
+      label: "All Escalations",
+      href: "/loan-processor/escalations?tab=all_escalations", 
+      icon: ShieldAlert,
+      badge: (
+        <Badge size="sm" variant="error">
+          5
+        </Badge>
+      ),
+    },
+    {
+      label: "My Escalations",
+      href: "/loan-processor/escalations?tab=my_escalations",
+      icon: ShieldAlert,
+      badge: (
+        <Badge size="sm" variant="warning">
+          2
+        </Badge>
+      ),
+    },
+  ],
+},
+    {
       label: "Call Management",
       items: [
         {
@@ -143,7 +168,6 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
         },
       ],
     },
-    
     {
       label: "Payment Reminders",
       items: [
@@ -161,13 +185,12 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
           label: "All Repayments",
           href: "/repayments/all",
           icon: Server,
-    },
+        },
         {
           label: "My Repayments",
           href: "/repayments/my-payments",
           icon: Zap,
         },
-
       ],
     },
     {
@@ -213,7 +236,6 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
           href: "/template",
           icon: LayoutGrid,
         },
-
         {
           label: "Template Variable Manual",
           href: "/template/sms-template-manual",
@@ -290,6 +312,8 @@ export const routeConfig = {
   unassignedLoans: "/loan-processor/unassigned",
   loanDetails: (id: string) => `/loans/${id}`,
   installmentDetails: (id: string) => `/installments/${id}`,
+  
+ 
   
   // Call log routes
   callLogs: "/call_logs",

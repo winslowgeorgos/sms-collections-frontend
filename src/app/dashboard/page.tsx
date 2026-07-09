@@ -13,6 +13,8 @@ import {
   Megaphone
 } from 'lucide-react';
 
+import NotificationLog from '@/components/notifications/NotificationLog';
+
 export default function DashboardPage() {
   const [stats, setStats] = useState({
     totalTemplates: 0,

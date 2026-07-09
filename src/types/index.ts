@@ -420,3 +420,31 @@ export interface PaymentReminder {
   created_at: string;
   updated_at: string;
 }
+export interface EscalationRecord {
+  loan_id: string;
+  customer_name: string;
+  phone_number: string;
+  registration_number: string;
+  cumulative_balance: number;
+  days_overdue: number;
+  to_repossess: boolean;
+  repossession_status: string;
+  repossession_status_display: string;
+  collection_condition: string;
+  collection_condition_display: string;
+  assigned_officer: string;
+  escalation_date: string;
+  is_auto_escalated: boolean;
+}
+
+export interface EscalationSummary {
+  total_escalated: number;
+  total_cumulative_balance: number;
+  avg_days_overdue: number;
+}
+
+export interface EscalationApiResponse {
+  loans: EscalationRecord[];
+  total_count: number;
+  summary: EscalationSummary;
+}
