@@ -1643,17 +1643,17 @@ export default function AdminAnalyticsDashboard() {
         fetchDashboardSummary(),
         fetchCurrentMonthMetrics(),
         fetchCurrentWeekMetrics(),
-        fetchLoanStatistics(),
-        fetchBalanceHistory(),
-        fetchJobMetrics(),
-        fetchRecentJobs(),
-        fetchLoanDistribution(),
+        // fetchLoanStatistics(),
+        // fetchBalanceHistory(),
+        // fetchJobMetrics(),
+        // fetchRecentJobs(),
+        // fetchLoanDistribution(),
         fetchPaymentPatterns(),
         fetchPerformanceTrends(),
-        fetchRiskMetrics(),
-        fetchEfficiencyMetrics(),
-        fetchCustomerInsights(),
-        fetchForecastData(),
+        // fetchRiskMetrics(),
+        // fetchEfficiencyMetrics(),
+        // fetchCustomerInsights(),
+        // fetchForecastData(),
         loadOfficerData()
       ]);
     } catch (error) {
@@ -1667,7 +1667,7 @@ export default function AdminAnalyticsDashboard() {
     fetchAllData();
     fetchSchedules();
     fetchScheduleStats();
-    fetchFrequencyOptions();
+    // fetchFrequencyOptions();
   }, [selectedTimeRange, schedulePagination.page, schedulePagination.page_size]);
 
   useEffect(() => {
@@ -2479,65 +2479,7 @@ export default function AdminAnalyticsDashboard() {
     
 
           {/* Cumulative Balance Trend */}
-          <Card>
-            <CardHeader>
-              <h2 className="text-lg font-semibold">Cumulative Balance Trend</h2>
-            </CardHeader>
-            <CardContent>
-              <div className="h-80">
-                {balanceHistory && balanceHistory?.data?.dates?.length > 0 && (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={balanceHistory?.data?.dates?.map((date, index) => ({
-                      date,
-                      balance: balanceHistory?.data?.cumulative_balances[index],
-                      installments: balanceHistory?.data?.installment_counts[index],
-                      overdue: balanceHistory?.data?.overdue_counts[index],
-                      collections: balanceHistory?.data?.daily_collections?.[index] || 0
-                    }))}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis yAxisId="left" />
-                      <YAxis yAxisId="right" orientation="right" />
-                      <Tooltip 
-                        formatter={(value: any, name: string) => {
-                          if (name === 'balance' || name === 'collections') return formatCurrency(value);
-                          return value;
-                        }}
-                      />
-                      <Legend />
-                      <Line
-                        yAxisId="left"
-                        type="monotone"
-                        dataKey="balance"
-                        name="Cumulative Balance"
-                        stroke="#8884d8"
-                        strokeWidth={2}
-                      />
-                      <Bar
-                        yAxisId="right"
-                        dataKey="installments"
-                        name="Installments"
-                        fill="#82ca9d"
-                      />
-                      <Line
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="overdue"
-                        name="Overdue"
-                        stroke="#ff7300"
-                      />
-                      <Bar
-                        yAxisId="right"
-                        dataKey="collections"
-                        name="Daily Collections"
-                        fill="#0088FE"
-                      />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          
 
           {/* Officer Performance Section */}
           <div className="space-y-4">

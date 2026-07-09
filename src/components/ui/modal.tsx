@@ -1,17 +1,16 @@
 // components/ui/modal.tsx
 import React from 'react';
 import { X, Loader } from 'lucide-react';
-import { cn } from '@/lib/utils'; // Optional utility for class merging
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title: string | React.ReactNode; // ✅ Allow string or ReactNode
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   isLoading?: boolean;
-  scrollBehavior?: 'inside' | 'outside'; // Choose scrolling behavior
-  closeOnBackdropClick?: boolean; // New prop to control backdrop click behavior
+  scrollBehavior?: 'inside' | 'outside';
+  closeOnBackdropClick?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -21,8 +20,8 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   size = 'md',
   isLoading = false,
-  scrollBehavior = 'inside', // Default to scrolling inside modal
-  closeOnBackdropClick = false, // Default to false - won't close on backdrop click
+  scrollBehavior = 'inside',
+  closeOnBackdropClick = false,
 }) => {
   if (!isOpen) return null;
 
@@ -34,27 +33,28 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Only close if explicitly enabled and not loading
     if (closeOnBackdropClick && e.target === e.currentTarget && !isLoading) {
       onClose();
     }
   };
 
   const modalContent = (
-    <div className={`bg-white rounded-card w-full ${sizeClasses[size]} mx-auto flex flex-col max-h-[90vh]`}>
+    <div className={`bg-white rounded-lg w-full ${sizeClasses[size]} mx-auto flex flex-col max-h-[90vh] relative shadow-xl`}>
       {isLoading && (
-        <div className="absolute inset-0 bg-white bg-opacity-70 flex items-center justify-center z-10 rounded-card">
-          <Loader className="animate-spin text-accent-600" size={32} />
+        <div className="absolute inset-0 bg-white bg-opacity-70 flex items-center justify-center z-10 rounded-lg">
+          <Loader className="animate-spin text-blue-600" size={32} />
         </div>
       )}
       
       {/* Modal Header - Fixed */}
       <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200">
-        <h2 className="text-xl font-semibold text-gray-900">{title}</h2>
+        <div className="text-xl font-semibold text-gray-900">
+          {title}
+        </div>
         <button
           onClick={onClose}
           disabled={isLoading}
-          className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+          className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50 p-1 rounded-lg hover:bg-gray-100"
         >
           <X size={24} />
         </button>
