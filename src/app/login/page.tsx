@@ -7,7 +7,6 @@ import { apiClient } from '@/lib/api';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Image from "next/image";
-import Link from 'next/link';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -25,17 +24,29 @@ export default function LoginPage() {
 
     try {
       // Step 1: Get authentication tokens
-      const tokens = await apiClient.login(username, password);
+      const loginResponse = await apiClient.login(username, password);
       
+      // hydrate apiClient in-memory tokens so subsequent requests carry auth headers
+      if (typeof (apiClient as any).setTokens === 'function') {
+        await (apiClient as any).setTokens(loginResponse);
+      }
+
       // Step 2: Fetch user details and permissions
       const userDetails = await apiClient.getUserDetails();
       
-      // Step 3: Store everything via auth context
-      login(tokens, userDetails);
+      // Step 3: Extract session seed from response payloads
+      const sessionSeed =
+        (loginResponse as any)?.session_seed ||
+        (userDetails as any)?.session_seed ||
+        (userDetails as any)?.user?.session_seed;
 
-      // check if user role is officer and direct to '/analytics/officer/{{user_id}}' instead of dashboard
-      if (userDetails.user.role === 'collection_officer') {
-        router.push(`/analytics/officer/${userDetails?.user?.id}`);
+      // Step 4: Initialize encryption vault and context state
+      await login(loginResponse, userDetails, sessionSeed);
+
+      
+      const user = userDetails?.user;
+      if (user?.role === 'collection_officer' && user?.id) {
+        router.push(`/analytics/officer/${user.id}`);
         return;
       }
       

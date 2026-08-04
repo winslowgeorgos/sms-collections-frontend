@@ -1,14 +1,11 @@
-// components/ui/sidebarnav.tsx
 "use client";
 
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { NavItemType } from "@/utils/config";
-import { useRouter } from "next/navigation";
 import Image from "next/image";
-
-
+import { useAuth } from "@/context/auth-context"; // Adjust path to your AuthContext location
 
 // Fallback icons using Lucide React
 import { 
@@ -45,8 +42,9 @@ export function SidebarNavigationSectionsSubheadings({
   activeUrl,
 }: SidebarNavigationSectionsSubheadingsProps) {
   const pathname = usePathname();
-    const router = useRouter();
-
+  
+  // Use user state and logout function directly from AuthContext
+  const { user, logout } = useAuth();
 
   const getIconComponent = (icon: any) => {
     if (typeof icon === 'function') {
@@ -60,33 +58,20 @@ export function SidebarNavigationSectionsSubheadings({
     return LayoutGrid;
   };
 
-  const handleLogout = () => {
-    // 1. Remove all user session data
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("user");
-    localStorage.clear(); // optional — clears everything
-
-    // 2. Remove cookies (if you stored JWT/session in cookie)
-    document.cookie = "authToken=; Max-Age=0; path=/;";
-
-    // 3. Redirect to login page
-    router.push("/login");
-
-    // Optional: Force refresh the route to avoid stale UI
-    router.refresh();
+  const handleLogout = async () => {
+    try {
+      // Cleanly triggers AuthContext logout -> apiClient.logoutUser()
+      await logout();
+    } catch (error) {
+      console.error("Error during sidebar logout:", error);
+    }
   };
-
-  // get user data from localStorage (if needed for display)
-  const userData = typeof window !== "undefined" ? localStorage.getItem("user_details") : null;
-  const user = userData ? JSON.parse(userData)?.user : null;
-
 
   return (
     <div className="flex h-full w-64 flex-col bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800">
       {/* Logo Section */}
       <div className="flex h-16 items-center justify-between border-b border-gray-200 dark:border-gray-800 px-6">
-        <div className="flex items-center gap-2">
-
+        <div className="flex items]-center gap-2">
 <div className="h-8 w-8 rounded-lg overflow-hidden flex items-center justify-center">
   <Image
     src="/assets/images/clogo.png"
@@ -112,13 +97,26 @@ export function SidebarNavigationSectionsSubheadings({
               </h3>
               <ul className="space-y-1">
                 {section.items.map((item, itemIndex) => {
-                  const isActive = pathname === item.href;
+                  const rawHref = item.href as unknown;
+                  let resolvedHref = typeof rawHref === 'function'
+                    ? rawHref(user) 
+                    : item.href;
+
+                  if (resolvedHref && typeof resolvedHref === 'object') {
+                    resolvedHref = String(resolvedHref);
+                  }
+
+                  const finalHref = typeof resolvedHref === 'string' 
+                    ? resolvedHref.replace('[object Promise]', user?.id ? String(user.id) : '') 
+                    : '#';
+
+                  const isActive = pathname === finalHref;
                   const IconComponent = getIconComponent(item.icon);
                   
                   return (
                     <li key={item.label}>
                       <Link
-                        href={item.href}
+                        href={finalHref}
                         className={cn(
                           "group flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ease-in-out transform hover:scale-[1.02]",
                           isActive
@@ -138,11 +136,7 @@ export function SidebarNavigationSectionsSubheadings({
                                 : "text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300 group-hover:scale-110"
                             )}
                           >
-                            {typeof IconComponent === "function" ? (
-                              <IconComponent size={20} />
-                            ) : (
-                              <IconComponent size={20} />
-                            )}
+                            <IconComponent size={20} />
                           </div>
                           <span className="transition-all duration-200">
                             {item.label}
@@ -167,14 +161,15 @@ export function SidebarNavigationSectionsSubheadings({
       <div className="border-t border-gray-200 dark:border-gray-800 p-4">
         <div className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-200 cursor-pointer group">
           <div className="h-8 w-8 rounded-full bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center">
-            <span className="text-white text-xs font-medium">U</span>
+            <span className="text-white text-xs font-medium">
+              {user?.username ? user.username.charAt(0).toUpperCase() : 'U'} </span>
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
               <em>User Name: </em> {user ? user?.username : "Guest"}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-             <em> Role: </em> {user ? user?.role : "N/A"}
+             <em> Role: </em> {user ? (user as any)?.role : "N/A"}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 wrap">
              <em> Email: </em> {user ? user?.email : "N/A"}
