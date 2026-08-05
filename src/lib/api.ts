@@ -1,7 +1,8 @@
 // lib/api.ts
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
-import { API_BASE_URL, OUT_API_BASE_URL, AUTH_TOKEN_KEY, USER_KEY } from './constants';
-import { AuthTokens, UserDetailsResponse } from '@/types';
+import { API_BASE_URL, OUT_API_BASE_URL, AUTH_TOKEN_KEY, USER_KEY, USER_DETAILS_KEY } from './constants';
+import { AuthTokens } from '@/types';
+import {encryptAndStore,retrieveAndDecrypt,removeFromDataStore,setSessionSeed,clearSecuritySession,} from '@/utils/sec';
 
 // Helper function to determine which base URL to use
 const getBaseUrl = (): string => {
@@ -20,6 +21,11 @@ class APIClient {
   private client: AxiosInstance;
   private isRefreshing = false;
   private refreshSubscribers: ((token: string) => void)[] = [];
+  
+  // In-memory token cache to support synchronous Axios request interceptors
+  private cachedTokens: AuthTokens | null = null;
+  private isInitialized = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor() {
     this.client = axios.create({
@@ -31,15 +37,41 @@ class APIClient {
     });
 
     this.setupInterceptors();
+    this.initializeCache();
+  }
+
+  private async initializeCache(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    if (this.isInitialized) return;
+
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        try {
+          const tokens = await retrieveAndDecrypt<AuthTokens>(AUTH_TOKEN_KEY);
+          if (tokens) {
+            this.cachedTokens = tokens;
+          }
+        } catch (error) {
+          console.error('[APIClient] Error initializing token cache from vault:', error);
+        } finally {
+          this.isInitialized = true;
+        }
+      })();
+    }
+
+    return this.initPromise;
   }
 
   private setupInterceptors() {
     // Request interceptor
     this.client.interceptors.request.use(
-      (config: InternalAxiosRequestConfig) => {
-        const tokens = this.getStoredTokens();
-        if (tokens?.access) {
-          config.headers.Authorization = `Bearer ${tokens.access}`;
+      async (config: InternalAxiosRequestConfig) => {
+        if (!this.isInitialized && typeof window !== 'undefined') {
+          await this.initializeCache();
+        }
+
+        if (this.cachedTokens?.access) {
+          config.headers.Authorization = `Bearer ${this.cachedTokens.access}`;
         }
         return config;
       },
@@ -101,7 +133,6 @@ class APIClient {
           return Promise.reject(new Error('You do not have permission to perform this action.'));
         }
 
-        // For validation errors, pass through the response data
         if (error.response?.status === 400) {
           return Promise.reject(error);
         }
@@ -111,48 +142,44 @@ class APIClient {
     );
   }
 
-  private getStoredTokens(): AuthTokens | null {
-    if (typeof window === 'undefined') return null;
-    try {
-      const tokens = localStorage.getItem(AUTH_TOKEN_KEY);
-      return tokens ? JSON.parse(tokens) : null;
-    } catch (error) {
-      console.error('Error reading tokens from localStorage:', error);
-      return null;
-    }
-  }
-
-  private setStoredTokens(tokens: AuthTokens): void {
+  // --- VAULT SYNC METHODS ---
+  public async setTokens(tokens: AuthTokens | null): Promise<void> {
+    this.cachedTokens = tokens;
     if (typeof window === 'undefined') return;
-    try {
-      localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(tokens));
-    } catch (error) {
-      console.error('Error storing tokens in localStorage:', error);
+
+    if (tokens) {
+      await encryptAndStore(AUTH_TOKEN_KEY, tokens);
+    } else {
+      await removeFromDataStore(AUTH_TOKEN_KEY);
     }
   }
 
   private async refreshToken(): Promise<AuthTokens | null> {
-    const tokens = this.getStoredTokens();
-    if (!tokens?.refresh) {
-      this.logout();
+    if (!this.cachedTokens?.refresh) {
+      await this.logoutUser();
       return null;
     }
 
     try {
       const response = await axios.post(`${getBaseUrl()}/token/refresh/`, {
-        refresh: tokens.refresh,
+        refresh: this.cachedTokens.refresh,
       });
+
+      // Capture new session seed if returned on refresh
+      if (response.data?.session_seed) {
+        setSessionSeed(response.data.session_seed);
+      }
 
       const newTokens: AuthTokens = {
         access: response.data.access,
-        refresh: tokens.refresh, // Keep the original refresh token
+        refresh: response.data.refresh || this.cachedTokens.refresh,
       };
 
-      this.setStoredTokens(newTokens);
+      await this.setTokens(newTokens);
       return newTokens;
     } catch (error) {
       console.error('Token refresh failed:', error);
-      this.logout();
+      await this.logoutUser();
       throw error;
     }
   }
@@ -166,15 +193,25 @@ class APIClient {
   private onRefreshFailure() {
     this.refreshSubscribers = [];
     this.isRefreshing = false;
-    this.logout();
+    this.logoutUser();
   }
 
-  private logout() {
+  // Public logout routine that purges vault data
+  public async logoutUser(): Promise<void> {
     if (typeof window === 'undefined') return;
-    
+
     try {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
+      // 1. Instantly clear in-memory tokens and active security session
+      clearSecuritySession();
+      this.cachedTokens = null;
+
+      // 2. Purge client-side persistent vault storage (IndexedDB / LocalStorage)
+      await Promise.all([
+        removeFromDataStore(AUTH_TOKEN_KEY),
+        removeFromDataStore(USER_KEY),
+        removeFromDataStore(USER_DETAILS_KEY),
+      ]);
+
       // Redirect to login page
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
@@ -191,13 +228,19 @@ class APIClient {
         username,
         password,
       });
-      
+
+      // Extract session seed from login response
+      const sessionSeed = response.data?.session_seed || response.data?.user?.session_seed;
+      if (sessionSeed) {
+        setSessionSeed(sessionSeed);
+      }
+
       const tokens: AuthTokens = {
         access: response.data.access,
         refresh: response.data.refresh,
       };
-      
-      this.setStoredTokens(tokens);
+
+      await this.setTokens(tokens);
       return tokens;
     } catch (error: any) {
       if (error.response?.status === 401) {
@@ -207,11 +250,11 @@ class APIClient {
     }
   }
 
-// Request password reset link by sending an email address
+  // Request password reset link by sending an email address
   public async requestPasswordReset(email: string): Promise<{ detail: string }> {
     try {
       const response = await this.client.post<{ detail: string }>('/auth/password/request/', { email });
-      return response.data; // Added .data here
+      return response.data;
     } catch (error: any) {
       if (error.response?.data) {
         throw error.response.data;
@@ -228,7 +271,7 @@ class APIClient {
         token: data.token,
         new_password: data.newPassword,
       });
-      return response.data; // Added .data here
+      return response.data;
     } catch (error: any) {
       if (error.response?.data) {
         throw error.response.data;
@@ -237,24 +280,13 @@ class APIClient {
     }
   }
 
-public async getUserDetails(): Promise<UserDetailsResponse> {
-  try {
-    const response = await this.client.get('/users/me/');
-    return response.data;
-  } catch (error) {
-    console.error('Failed to fetch user details:', error);
-    throw error;
-  }
-}
-
-  public async logoutUser(): Promise<void> {
+  public async getUserDetails(): Promise<any> {
     try {
-      // Call logout endpoint if available
-      await this.client.post('/logout/');
+      const response = await this.client.get('/users/me/');
+      return response.data;
     } catch (error) {
-      console.error('Logout endpoint error:', error);
-    } finally {
-      this.logout();
+      console.error('Failed to fetch user details:', error);
+      throw error;
     }
   }
 
@@ -262,7 +294,6 @@ public async getUserDetails(): Promise<UserDetailsResponse> {
     return this.client;
   }
 
-  // Helper method for common API patterns
   public async get<T>(url: string, params?: any): Promise<T> {
     const response = await this.client.get<T>(url, { params });
     return response.data;
@@ -288,15 +319,12 @@ public async getUserDetails(): Promise<UserDetailsResponse> {
     return response.data;
   }
 
-  // Check if user is authenticated
   public isAuthenticated(): boolean {
-    const tokens = this.getStoredTokens();
-    return !!(tokens?.access);
+    return !!(this.cachedTokens?.access);
   }
 
-  // Get current user tokens
   public getCurrentTokens(): AuthTokens | null {
-    return this.getStoredTokens();
+    return this.cachedTokens;
   }
 }
 

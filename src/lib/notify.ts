@@ -1,7 +1,7 @@
-// lib/api.ts
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
-import { OUT_NOTIFY_BASE_URL, NOTIFY_BASE_URL, AUTH_TOKEN_KEY, USER_KEY,   } from './constants';
+import { OUT_NOTIFY_BASE_URL, NOTIFY_BASE_URL, AUTH_TOKEN_KEY, USER_KEY, USER_DETAILS_KEY } from './constants';
 import { AuthTokens, UserDetailsResponse } from '@/types';
+import {encryptAndStore,retrieveAndDecrypt,removeFromDataStore,setSessionSeed,clearSecuritySession,} from '@/utils/sec';
 
 // Helper function to determine which base URL to use
 const getBaseUrl = (): string => {
@@ -21,6 +21,11 @@ class APIClient {
   private isRefreshing = false;
   private refreshSubscribers: ((token: string) => void)[] = [];
 
+  // In-memory token cache for high-performance, synchronous-like request interceptors
+  private cachedTokens: AuthTokens | null = null;
+  private isInitialized = false;
+  private initPromise: Promise<void> | null = null;
+
   constructor() {
     this.client = axios.create({
       baseURL: getBaseUrl(),
@@ -31,15 +36,44 @@ class APIClient {
     });
 
     this.setupInterceptors();
+    this.initializeCache();
+  }
+
+  /**
+   * Hydrates memory cache from encrypted IndexedDB vault on startup.*/
+  private async initializeCache(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    if (this.isInitialized) return;
+
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        try {
+          const tokens = await retrieveAndDecrypt<AuthTokens>(AUTH_TOKEN_KEY);
+          if (tokens) {
+            this.cachedTokens = tokens;
+          }
+        } catch (error) {
+          console.error('[APIClient] Error initializing token cache from vault:', error);
+        } finally {
+          this.isInitialized = true;
+        }
+      })();
+    }
+
+    return this.initPromise;
   }
 
   private setupInterceptors() {
     // Request interceptor
     this.client.interceptors.request.use(
-      (config: InternalAxiosRequestConfig) => {
-        const tokens = this.getStoredTokens();
-        if (tokens?.access) {
-          config.headers.Authorization = `Bearer ${tokens.access}`;
+      async (config: InternalAxiosRequestConfig) => {
+        // Guarantee token cache hydration completes before any request dispatches
+        if (!this.isInitialized && typeof window !== 'undefined') {
+          await this.initializeCache();
+        }
+
+        if (this.cachedTokens?.access) {
+          config.headers.Authorization = `Bearer ${this.cachedTokens.access}`;
         }
         return config;
       },
@@ -52,6 +86,9 @@ class APIClient {
       async (error) => {
         const originalRequest = error.config;
 
+        const requestUrl = originalRequest?.url || '';
+        const isAuthRequest = requestUrl.includes('token/');
+
         // Handle network errors
         if (!error.response) {
           console.error('Network error:', error.message);
@@ -59,7 +96,11 @@ class APIClient {
         }
 
         // Handle 401 Unauthorized (token refresh)
-        if (error.response?.status === 401 && !originalRequest._retry) {
+        if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
+          if (!this.cachedTokens?.refresh) {
+            return Promise.reject(error);
+          }
+
           if (this.isRefreshing) {
             return new Promise((resolve) => {
               this.refreshSubscribers.push((token: string) => {
@@ -80,7 +121,7 @@ class APIClient {
               return this.client(originalRequest);
             }
           } catch (refreshError) {
-            this.onRefreshFailure();
+            await this.onRefreshFailure();
             return Promise.reject(refreshError);
           }
         }
@@ -101,7 +142,7 @@ class APIClient {
           return Promise.reject(new Error('You do not have permission to perform this action.'));
         }
 
-        // For validation errors, pass through the response data
+        // For validation errors (400), pass through response data
         if (error.response?.status === 400) {
           return Promise.reject(error);
         }
@@ -111,48 +152,45 @@ class APIClient {
     );
   }
 
-  private getStoredTokens(): AuthTokens | null {
-    if (typeof window === 'undefined') return null;
-    try {
-      const tokens = localStorage.getItem(AUTH_TOKEN_KEY);
-      return tokens ? JSON.parse(tokens) : null;
-    } catch (error) {
-      console.error('Error reading tokens from localStorage:', error);
-      return null;
-    }
-  }
-
-  private setStoredTokens(tokens: AuthTokens): void {
+  // Synchronizes in-memory cache with the encrypted IndexedDB vault
+  public async setTokens(tokens: AuthTokens | null): Promise<void> {
+    this.cachedTokens = tokens;
     if (typeof window === 'undefined') return;
-    try {
-      localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(tokens));
-    } catch (error) {
-      console.error('Error storing tokens in localStorage:', error);
+
+    if (tokens) {
+      await encryptAndStore(AUTH_TOKEN_KEY, tokens);
+    } else {
+      await removeFromDataStore(AUTH_TOKEN_KEY);
     }
   }
 
   private async refreshToken(): Promise<AuthTokens | null> {
-    const tokens = this.getStoredTokens();
-    if (!tokens?.refresh) {
-      this.logout();
+    if (!this.cachedTokens?.refresh) {
+      await this.logoutUser();
       return null;
     }
 
     try {
-      const response = await axios.post(`${getBaseUrl()}/token/refresh/`, {
-        refresh: tokens.refresh,
-      });
+      const response = await axios.post(
+        `${getBaseUrl()}/token/refresh/`,
+        { refresh: this.cachedTokens.refresh }
+      );
+
+      // Bind dynamic session seed if returned by backend
+      if (response.data?.session_seed) {
+        setSessionSeed(response.data.session_seed);
+      }
 
       const newTokens: AuthTokens = {
         access: response.data.access,
-        refresh: tokens.refresh, // Keep the original refresh token
+        refresh: response.data.refresh || this.cachedTokens.refresh,
       };
 
-      this.setStoredTokens(newTokens);
+      await this.setTokens(newTokens);
       return newTokens;
     } catch (error) {
       console.error('Token refresh failed:', error);
-      this.logout();
+      await this.logoutUser();
       throw error;
     }
   }
@@ -163,41 +201,66 @@ class APIClient {
     this.isRefreshing = false;
   }
 
-  private onRefreshFailure() {
+  private async onRefreshFailure() {
     this.refreshSubscribers = [];
     this.isRefreshing = false;
-    this.logout();
+    await this.logoutUser();
   }
 
-  private logout() {
+  // AUDIT FIX: Guaranteed multi-stage cleanup before redirect
+  public async logoutUser(): Promise<void> {
     if (typeof window === 'undefined') return;
-    
+
     try {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
-      // Redirect to login page
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      // Optional: Notify backend to invalidate refresh token
+      await this.client.post('/logout/').catch(() => {});
+    } finally {
+      try {
+        // Clear Web Crypto session context and memory cache
+        clearSecuritySession();
+        this.cachedTokens = null;
+
+        // Ensure all sensitive records are purged from IndexedDB in parallel
+        await Promise.all([
+          removeFromDataStore(AUTH_TOKEN_KEY),
+          removeFromDataStore(USER_KEY),
+          removeFromDataStore(USER_DETAILS_KEY),
+        ]);
+      } catch (error) {
+        console.error('Error during storage cleanup on logout:', error);
+      } finally {
+        // Only redirect after client storage clearance finishes
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
-    } catch (error) {
-      console.error('Error during logout:', error);
     }
   }
 
-  // Public methods
+  // --- PUBLIC API METHODS ---
+
   public async login(username: string, password: string): Promise<AuthTokens> {
     try {
+      this.isRefreshing = false;
+      this.refreshSubscribers = [];
+
       const response = await this.client.post('/token/', {
         username,
         password,
       });
-      
+
+      // Synchronize key derivation seed for Web Crypto AES-GCM vault
+      const sessionSeed = response.data?.session_seed || response.data?.user?.session_seed;
+      if (sessionSeed) {
+        setSessionSeed(sessionSeed);
+      }
+
       const tokens: AuthTokens = {
         access: response.data.access,
         refresh: response.data.refresh,
       };
-      
-      this.setStoredTokens(tokens);
+
+      await this.setTokens(tokens);
       return tokens;
     } catch (error: any) {
       if (error.response?.status === 401) {
@@ -207,26 +270,13 @@ class APIClient {
     }
   }
 
-  // Inside the APIClient class, add this method:
-
-public async getUserDetails(): Promise<UserDetailsResponse> {
-  try {
-    const response = await this.client.get('/users/me/');
-    return response.data;
-  } catch (error) {
-    console.error('Failed to fetch user details:', error);
-    throw error;
-  }
-}
-
-  public async logoutUser(): Promise<void> {
+  public async getUserDetails(): Promise<UserDetailsResponse> {
     try {
-      // Call logout endpoint if available
-      await this.client.post('/logout/');
+      const response = await this.client.get('/users/me/');
+      return response.data;
     } catch (error) {
-      console.error('Logout endpoint error:', error);
-    } finally {
-      this.logout();
+      console.error('Failed to fetch user details:', error);
+      throw error;
     }
   }
 
@@ -260,15 +310,13 @@ public async getUserDetails(): Promise<UserDetailsResponse> {
     return response.data;
   }
 
-  // Check if user is authenticated
+  // Instant synchronous memory-backed checks
   public isAuthenticated(): boolean {
-    const tokens = this.getStoredTokens();
-    return !!(tokens?.access);
+    return !!(this.cachedTokens?.access);
   }
 
-  // Get current user tokens
   public getCurrentTokens(): AuthTokens | null {
-    return this.getStoredTokens();
+    return this.cachedTokens;
   }
 }
 

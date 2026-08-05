@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Bell, CheckCheck, BellOff, BellRing } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { notificationApi } from '@/lib/notificationApi';
+import { apiClient } from '@/lib/notify';
 import type { Notification } from '@/types/notification';
 
 // ---------- Fallback UI (remove when shadcn/ui is installed) ----------
@@ -88,9 +89,10 @@ export default function NotificationBell() {
   }, []);
 
   const fetchNotifications = useCallback(async () => {
+    if (!apiClient.isAuthenticated()) return;
+
     try {
       const response = await notificationApi.getNotifications({ page_size: 50 });
-      // response might be already unwrapped (e.g., { results: [...] }) or raw axios
       const data = (response as any).data ?? response;
       const items = Array.isArray(data) ? data : data?.results ?? [];
       
@@ -129,6 +131,8 @@ export default function NotificationBell() {
   }, [desktopEnabled, permissionGranted]);
 
   const fetchUnreadCount = useCallback(async () => {
+    if (!apiClient.isAuthenticated()) return;
+
     try {
       const response = await notificationApi.getUnreadCount();
       const data = (response as any).data ?? response;
@@ -141,18 +145,26 @@ export default function NotificationBell() {
 
   // Poll every 30 seconds
   useEffect(() => {
-    fetchNotifications();
-    fetchUnreadCount();
-    const interval = setInterval(() => {
+    if (typeof window !== 'undefined' && window.location.pathname === '/login') return;
+
+    if (apiClient.isAuthenticated()) {
       fetchNotifications();
       fetchUnreadCount();
+    }
+
+    const interval = setInterval(() => {
+      if (apiClient.isAuthenticated()) {
+        fetchNotifications();
+        fetchUnreadCount();
+      }
     }, 30000);
+
     return () => clearInterval(interval);
   }, [fetchNotifications, fetchUnreadCount]);
 
   // Refresh on popover open
   useEffect(() => {
-    if (open) {
+    if (open && apiClient.isAuthenticated()) {
       fetchNotifications();
       fetchUnreadCount();
     }

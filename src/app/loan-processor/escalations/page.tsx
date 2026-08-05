@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation"; 
 import { EscalationRecord, EscalationApiResponse } from "../../../types"; 
-import { OUT_API_BASE_URL } from "@/lib/constants";
+import { OUT_API_BASE_URL, AUTH_TOKEN_KEY, USER_KEY, USER_DETAILS_KEY } from "@/lib/constants";
+import { retrieveAndDecrypt } from "@/utils/sec";
 import {  
   ChevronLeft, 
   ChevronRight, 
@@ -97,10 +98,11 @@ function EscalationWorkspaceContent() {
   const searchParams = useSearchParams();
   const activeTabUrl = searchParams.get("tab") || "all_escalations";
 
-  const getAuthHeader = useCallback((): HeadersInit => {
+  const getAuthHeader = useCallback(async (): Promise<HeadersInit> => {
     if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
     try {
-      const token = JSON.parse(localStorage.getItem('auth_tokens') ?? '{}')?.access ?? '';
+      const tokenData = await retrieveAndDecrypt<any>(AUTH_TOKEN_KEY);
+      const token = tokenData?.access || tokenData || '';
       return {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -111,14 +113,30 @@ function EscalationWorkspaceContent() {
   }, []);
 
   const fetchEscalationData = useCallback(async () => {
-    setLoading(true);
-    try {
-      let url = `${OUT_API_BASE_URL}/loan-processor/escalation/escalated-loans/?page=${page}&page_size=${pageSize}`;
+  setLoading(true);
+  try {
+    let url = `${OUT_API_BASE_URL}/loan-processor/escalation/escalated-loans/?page=${page}&page_size=${pageSize}`;
 
-      if (activeTabUrl === "my_escalations") {
-        const loggedInOfficerId = localStorage.getItem("user_id") || "1"; 
-        url += `&officer_id=${loggedInOfficerId}`; 
+    if (activeTabUrl === "my_escalations") {
+      let officerId: string | null = null;
+      try {
+        const userDetails = await retrieveAndDecrypt<any>(USER_DETAILS_KEY);
+        const user = userDetails?.user || await retrieveAndDecrypt<any>(USER_KEY);
+        officerId = user?.id || user?.user_id || null;
+      } catch (err) {
+        console.error("Failed to decrypt officer context", err);
       }
+
+      // If officerId is missing for "my_escalations", break early or log an error
+      if (!officerId) {
+        console.warn("Officer ID not found for 'my_escalations' tab.");
+        // Optional: stop execution if backend requires officer_id for this tab
+        // setLoading(false);
+        // return;
+      } else {
+        url += `&officer_id=${officerId}`;
+      }
+    }
 
       if (debouncedSearch) url += `&search=${encodeURIComponent(debouncedSearch.trim())}`;
 
@@ -141,9 +159,10 @@ function EscalationWorkspaceContent() {
       if (filters.start_date) url += `&start_date=${filters.start_date}`;
       if (filters.end_date) url += `&end_date=${filters.end_date}`;
 
+      const headers = await getAuthHeader();
       const response = await fetch(url, { 
         method: "GET", 
-        headers: getAuthHeader()
+        headers
       });
       
       const payload: EscalationApiResponse = await response.json();
@@ -401,7 +420,7 @@ function EscalationWorkspaceContent() {
               ) : displayData.length === 0 ? (
                 <tr>
                   <td colSpan={viewMode === "all_escalations" ? 12 : 11} className="p-16 text-center text-slate-400 font-semibold">
-                    No system records found for applied filter.
+                    No system records found for this tab.
                   </td>
                 </tr>
               ) : (
