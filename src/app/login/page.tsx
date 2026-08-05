@@ -54,7 +54,7 @@ export default function LoginPage() {
       <Card className="max-w-md w-full">
         <CardHeader>
           <div className="overflow-hidden flex items-center justify-center">
-            <Image
+            <img
               src="/assets/images/clear_black_choice_logo.png"
               alt="Company Logo"
               width={300}

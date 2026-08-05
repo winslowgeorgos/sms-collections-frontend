@@ -187,6 +187,8 @@ export default function LoanDetailsPage() {
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isDownloadingPDF, setIsDownloadingPDF] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  
+  // Updated editFormData with new loan fields
   const [editFormData, setEditFormData] = useState({
     customer_name: '',
     id_number: '',
@@ -196,7 +198,12 @@ export default function LoanDetailsPage() {
     email: '',
     amount_due: 0,
     reference: '',
-    manual_due_dates: [] as string[]
+    manual_due_dates: [] as string[],
+    // NEW FIELDS - Editable Loan Information
+    principal_amount: 0,
+    loan_date: '',
+    loan_term_months: 0,
+    monthly_installment: 0,
   });
   const [newDueDate, setNewDueDate] = useState('');
 
@@ -392,6 +399,30 @@ export default function LoanDetailsPage() {
     }
   };
 
+  // Updated openEditModal with new fields
+  const openEditModal = () => {
+    if (demandLetterData) {
+      setEditFormData({
+        customer_name: demandLetterData.letter_data.customer.name,
+        id_number: demandLetterData.letter_data.customer.id_number,
+        address_line1: demandLetterData.letter_data.customer.address_line1,
+        address_line2: demandLetterData.letter_data.customer.address_line2,
+        phone: demandLetterData.letter_data.customer.phone,
+        email: demandLetterData.letter_data.customer.email,
+        amount_due: demandLetterData.letter_data.loan_info.amount_due,
+        reference: demandLetterData.letter_data.reference,
+        manual_due_dates: demandLetterData.letter_data.loan_info.manual_due_dates || [],
+        // NEW FIELDS - Populate from existing data
+        principal_amount: demandLetterData.letter_data.loan_info.principal_amount || 0,
+        loan_date: demandLetterData.letter_data.loan_info.loan_date || '',
+        loan_term_months: demandLetterData.letter_data.loan_info.loan_term_months || 0,
+        monthly_installment: demandLetterData.letter_data.loan_info.monthly_installment || 0,
+      });
+      setIsEditDemandLetterModalOpen(true);
+    }
+  };
+
+  // Updated handleEditDemandLetter with validation for new fields
   const handleEditDemandLetter = async () => {
     // Validate required fields
     if (!editFormData.customer_name) {
@@ -400,6 +431,24 @@ export default function LoanDetailsPage() {
     }
     if (!editFormData.phone) {
       alert('Phone number is required');
+      return;
+    }
+    
+    // NEW: Validate loan fields
+    if (!editFormData.principal_amount || editFormData.principal_amount <= 0) {
+      alert('Principal amount must be greater than 0');
+      return;
+    }
+    if (!editFormData.loan_date) {
+      alert('Loan date is required');
+      return;
+    }
+    if (!editFormData.loan_term_months || editFormData.loan_term_months <= 0) {
+      alert('Loan term must be greater than 0');
+      return;
+    }
+    if (!editFormData.monthly_installment || editFormData.monthly_installment <= 0) {
+      alert('Monthly installment must be greater than 0');
       return;
     }
     
@@ -468,23 +517,6 @@ export default function LoanDetailsPage() {
       }
     } finally {
       setIsSendingEmail(false);
-    }
-  };
-  
-  const openEditModal = () => {
-    if (demandLetterData) {
-      setEditFormData({
-        customer_name: demandLetterData.letter_data.customer.name,
-        id_number: demandLetterData.letter_data.customer.id_number,
-        address_line1: demandLetterData.letter_data.customer.address_line1,
-        address_line2: demandLetterData.letter_data.customer.address_line2,
-        phone: demandLetterData.letter_data.customer.phone,
-        email: demandLetterData.letter_data.customer.email,
-        amount_due: demandLetterData.letter_data.loan_info.amount_due,
-        reference: demandLetterData.letter_data.reference,
-        manual_due_dates: demandLetterData.letter_data.loan_info.manual_due_dates || []
-      });
-      setIsEditDemandLetterModalOpen(true);
     }
   };
 
@@ -855,11 +887,11 @@ export default function LoanDetailsPage() {
           {activeTab === 'installments' && (
             <div>
               <h3 className="text-lg font-medium mb-4">Installment Schedule</h3>
-           <InstallmentBreakdownTable
-  installments={installments}
-  onViewDetails={handleViewInstallment}
-  currentMonthInstallmentId={current_month_installment?.installment_id}
-/>
+              <InstallmentBreakdownTable
+                installments={installments}
+                onViewDetails={handleViewInstallment}
+                currentMonthInstallmentId={current_month_installment?.installment_id}
+              />
             </div>
           )}
 
@@ -1185,7 +1217,7 @@ export default function LoanDetailsPage() {
         </div>
       )}
 
-      {/* Edit Demand Letter Modal - With Installment Due Dates */}
+      {/* Edit Demand Letter Modal - With Installment Due Dates AND Editable Loan Fields */}
       {isEditDemandLetterModalOpen && demandLetterData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
@@ -1354,9 +1386,107 @@ export default function LoanDetailsPage() {
                 </div>
               </div>
 
+              {/* --- NEW SECTION: Editable Loan Information Fields --- */}
+              <div className="border rounded-lg p-4 bg-blue-50">
+                <label className="text-base font-semibold mb-3 block">
+                  <DollarSign className="inline h-4 w-4 mr-1" />
+                  Loan Information
+                  <span className="text-xs text-gray-500 ml-2">(Edit loan details)</span>
+                </label>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Principal Loan (KES) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editFormData.principal_amount}
+                      onChange={(e) => setEditFormData({...editFormData, principal_amount: parseFloat(e.target.value) || 0})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="120130.00"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">The total principal loan amount</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Loan Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={editFormData.loan_date ? new Date(editFormData.loan_date).toISOString().split('T')[0] : ''}
+                      onChange={(e) => {
+                        const dateStr = e.target.value;
+                        if (dateStr) {
+                          const date = new Date(dateStr);
+                          setEditFormData({
+                            ...editFormData, 
+                            loan_date: date.toLocaleDateString('en-US', { 
+                              day: 'numeric', 
+                              month: 'long', 
+                              year: 'numeric' 
+                            })
+                          });
+                        } else {
+                          setEditFormData({...editFormData, loan_date: ''});
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">The date the loan was disbursed</p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 mt-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Loan Term (months) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editFormData.loan_term_months}
+                      onChange={(e) => setEditFormData({...editFormData, loan_term_months: parseInt(e.target.value) || 0})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="7"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Total loan term in months</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Monthly Installment (KES) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editFormData.monthly_installment}
+                      onChange={(e) => setEditFormData({...editFormData, monthly_installment: parseFloat(e.target.value) || 0})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="27445.00"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">This will update the monthly installment amount in the letter</p>
+                  </div>
+                </div>
+                
+                {/* Preview of formatted loan date */}
+                {editFormData.loan_date && (
+                  <div className="mt-3 p-2 bg-white rounded border border-gray-200">
+                    <span className="text-sm font-medium text-gray-600">Formatted Date: </span>
+                    <span className="text-sm text-gray-900">{editFormData.loan_date}</span>
+                  </div>
+                )}
+              </div>
+              {/* --- END NEW SECTION --- */}
+
               {/* Installment Due Dates Section */}
               <div className="border rounded-lg p-4 bg-gray-50">
                 <label className="text-base font-semibold mb-2 block">
+                  <CalendarIcon className="inline h-4 w-4 mr-1" />
                   Installment Due Dates
                 </label>
                 
@@ -1429,7 +1559,7 @@ export default function LoanDetailsPage() {
                 </div>
               </div>
 
-              {/* Changes Summary */}
+              {/* Changes Summary - Updated with new fields */}
               {(editFormData.customer_name !== demandLetterData?.letter_data.customer.name ||
                 editFormData.id_number !== demandLetterData?.letter_data.customer.id_number ||
                 editFormData.address_line1 !== demandLetterData?.letter_data.customer.address_line1 ||
@@ -1438,6 +1568,10 @@ export default function LoanDetailsPage() {
                 editFormData.email !== demandLetterData?.letter_data.customer.email ||
                 editFormData.amount_due !== demandLetterData?.letter_data.loan_info.amount_due ||
                 editFormData.reference !== demandLetterData?.letter_data.reference ||
+                editFormData.principal_amount !== demandLetterData?.letter_data.loan_info.principal_amount ||
+                editFormData.loan_date !== demandLetterData?.letter_data.loan_info.loan_date ||
+                editFormData.loan_term_months !== demandLetterData?.letter_data.loan_info.loan_term_months ||
+                editFormData.monthly_installment !== demandLetterData?.letter_data.loan_info.monthly_installment ||
                 JSON.stringify(editFormData.manual_due_dates) !== JSON.stringify(demandLetterData?.letter_data.loan_info.manual_due_dates || [])) && (
                 <div className="bg-blue-50 p-3 rounded-lg">
                   <p className="text-sm font-medium text-blue-800 mb-2">📝 Changes to be applied:</p>
@@ -1466,6 +1600,19 @@ export default function LoanDetailsPage() {
                     {editFormData.reference !== demandLetterData?.letter_data.reference && (
                       <li>• Reference: "{demandLetterData?.letter_data.reference}" → "{editFormData.reference}"</li>
                     )}
+                    {/* NEW: Loan field changes */}
+                    {editFormData.principal_amount !== demandLetterData?.letter_data.loan_info.principal_amount && (
+                      <li>• Principal amount: KES {demandLetterData?.letter_data.loan_info.principal_amount?.toLocaleString() || '0'} → KES {editFormData.principal_amount.toLocaleString()}</li>
+                    )}
+                    {editFormData.loan_date !== demandLetterData?.letter_data.loan_info.loan_date && (
+                      <li>• Loan date: "{demandLetterData?.letter_data.loan_info.loan_date || 'Not set'}" → "{editFormData.loan_date || 'Not set'}"</li>
+                    )}
+                    {editFormData.loan_term_months !== demandLetterData?.letter_data.loan_info.loan_term_months && (
+                      <li>• Loan term: {demandLetterData?.letter_data.loan_info.loan_term_months || 0} months → {editFormData.loan_term_months} months</li>
+                    )}
+                    {editFormData.monthly_installment !== demandLetterData?.letter_data.loan_info.monthly_installment && (
+                      <li>• Monthly installment: KES {demandLetterData?.letter_data.loan_info.monthly_installment?.toLocaleString() || '0'} → KES {editFormData.monthly_installment.toLocaleString()}</li>
+                    )}
                     {JSON.stringify(editFormData.manual_due_dates) !== JSON.stringify(demandLetterData?.letter_data.loan_info.manual_due_dates || []) && (
                       <li>• Installment due dates: {demandLetterData?.letter_data.loan_info.manual_due_dates?.length || 0} date(s) → {editFormData.manual_due_dates.length} date(s)</li>
                     )}
@@ -1473,12 +1620,13 @@ export default function LoanDetailsPage() {
                 </div>
               )}
 
-              {/* Information Note */}
+              {/* Information Note - Updated */}
               <div className="bg-gray-50 p-3 rounded-lg">
                 <p className="text-sm text-gray-600">
-                  <strong>ℹ️ Note:</strong> Loan information like principal amount, loan date, 
-                  and installment details cannot be edited here. Please contact admin if 
-                  corrections are needed.
+                  <strong>ℹ️ Note:</strong> You can now edit the principal amount, loan date, 
+                  loan term, and monthly installment. These changes will be reflected in the 
+                  regenerated demand letter. Other loan details like interest rate and payment 
+                  due day are system-calculated and cannot be edited here.
                 </p>
               </div>
             </div>
@@ -1499,7 +1647,12 @@ export default function LoanDetailsPage() {
                       email: demandLetterData.letter_data.customer.email,
                       amount_due: demandLetterData.letter_data.loan_info.amount_due,
                       reference: demandLetterData.letter_data.reference,
-                      manual_due_dates: demandLetterData.letter_data.loan_info.manual_due_dates || []
+                      manual_due_dates: demandLetterData.letter_data.loan_info.manual_due_dates || [],
+                      // NEW: Reset loan fields
+                      principal_amount: demandLetterData.letter_data.loan_info.principal_amount || 0,
+                      loan_date: demandLetterData.letter_data.loan_info.loan_date || '',
+                      loan_term_months: demandLetterData.letter_data.loan_info.loan_term_months || 0,
+                      monthly_installment: demandLetterData.letter_data.loan_info.monthly_installment || 0,
                     });
                     setNewDueDate('');
                   }

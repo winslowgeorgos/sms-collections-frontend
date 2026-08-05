@@ -88,7 +88,7 @@ export function SidebarNavigationSectionsSubheadings({
         <div className="flex items-center gap-2">
 
 <div className="h-8 w-8 rounded-lg overflow-hidden flex items-center justify-center">
-  <Image
+  <img
     src="/assets/images/clogo.png"
     alt="Company Logo"
     width={32}
