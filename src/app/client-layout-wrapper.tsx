@@ -3,7 +3,7 @@
 
 import { usePathname } from 'next/navigation';
 import { SidebarNavigationSectionsSubheadings } from '@/components/ui/sidebarnav';
-import { navItemsWithSectionsSubheadings } from '@/utils/navigation-config';
+import { getNavItemsWithSections } from '@/utils/navigation-config';
 import { navItemPermissions } from '@/utils/permission-registry';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/context/permission-context';
@@ -34,12 +34,15 @@ export function ClientLayoutWrapper({ children }: ClientLayoutWrapperProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter navigation items based on user permissions
+  // Filter navigation items based on user ID and permissions
   const filteredNavItems = useMemo(() => {
     if (!userDetails) return [];
+
+    const userId = userDetails.user?.id ? Number(userDetails.user.id) : null;
+    const baseNavItems = getNavItemsWithSections(userId);
     const isSuperuser = userDetails.user.is_superuser;
 
-    return navItemsWithSectionsSubheadings
+    return baseNavItems
       .map(section => {
         const filteredItems = section.items.filter(item => {
           if (isSuperuser) return true;
@@ -50,7 +53,7 @@ export function ClientLayoutWrapper({ children }: ClientLayoutWrapperProps) {
         if (filteredItems.length === 0) return null;
         return { ...section, items: filteredItems };
       })
-      .filter(Boolean) as typeof navItemsWithSectionsSubheadings;
+      .filter(Boolean) as typeof baseNavItems;
   }, [userDetails, hasAccess]);
 
   const isAuthPage = pathname?.startsWith('/login') || pathname?.startsWith('/auth');

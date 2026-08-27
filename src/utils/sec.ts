@@ -6,7 +6,7 @@ const SYNC_CHANNEL_NAME = "SMS_VAULT_SYNC_CHANNEL";
 // Domain-separated HKDF Salt to meet NIST compliance guidelines
 const HKDF_SALT = new TextEncoder().encode("SMS_VAULT_HKDF_SALT_V1");
 
-// --- IN-MEMORY SESSION SEED STORAGE & CROSS-TAB SYNC ---
+// IN-MEMORY SESSION SEED STORAGE & CROSS-TAB SYNC
 let inMemorySessionSeed: string | null = null;
 
 // Initialize BroadcastChannel for multi-tab synchronization if running in the browser
@@ -24,16 +24,12 @@ if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem('app_session_seed');
       }
-      // Purge local IndexedDB ciphertext in secondary tabs when logout is triggered elsewhere
       await clearDataStoreInternal();
     }
   };
 }
 
-/**
- * Save the Django-issued session seed in RAM and sessionStorage upon login,
- * and broadcast the update to all other open tabs.
- */
+/*Save the Django-issued session seed in RAM and sessionStorage upon login and broadcast the update to all other open tabs.*/
 export function setSessionSeed(seed: string): void {
   inMemorySessionSeed = seed;
   if (typeof window !== 'undefined') {
@@ -42,9 +38,7 @@ export function setSessionSeed(seed: string): void {
   syncChannel?.postMessage({ type: 'SESSION_UPDATED', seed });
 }
 
-/**
- * Retrieve the active session seed from RAM or sessionStorage.
- */
+/*Retrieve the active session seed from RAM or sessionStorage.*/
 export function getSessionSeed(): string | null {
   if (inMemorySessionSeed) return inMemorySessionSeed;
 
@@ -58,10 +52,7 @@ export function getSessionSeed(): string | null {
   return null;
 }
 
-/**
- * Purge key material from memory/sessionStorage and wipe local IndexedDB
- * ciphertext upon logout, broadcasting the clearance across open tabs.
- */
+/**Purge key material from memory/sessionStorage and wipe local IndexedDB*/
 export async function clearSecuritySession(): Promise<void> {
   inMemorySessionSeed = null;
   if (typeof window !== 'undefined') {
@@ -71,9 +62,7 @@ export async function clearSecuritySession(): Promise<void> {
   await clearDataStoreInternal();
 }
 
-/**
- * Wipes all stored ciphertext records from the local browser store.
- */
+/*Wipes all stored ciphertext records from the local browser store.*/
 async function clearDataStoreInternal(): Promise<void> {
   try {
     const db = await getValidDatabase();
@@ -123,7 +112,6 @@ async function deriveKeyFromSeed(seedHex: string): Promise<CryptoKey> {
   );
 }
 
-// --- INDEXEDDB CONNECTION POOLING & RECOVERY ---
 let dbInstance: IDBDatabase | null = null;
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -164,9 +152,7 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-/**
- * Validates that the active database connection is alive before performing transaction operations.
- */
+/*Validates that the active database connection is alive before performing transaction operations.*/
 async function getValidDatabase(): Promise<IDBDatabase> {
   if (dbInstance) {
     try {
@@ -179,7 +165,7 @@ async function getValidDatabase(): Promise<IDBDatabase> {
   return openDatabase();
 }
 
-// --- DATA STORE READ/WRITE HELPERS ---
+// DATA STORE READ/WRITE HELPERS
 async function writeToDataStore(key: string, value: Uint8Array): Promise<void> {
   const db = await getValidDatabase();
   return new Promise((resolve, reject) => {
