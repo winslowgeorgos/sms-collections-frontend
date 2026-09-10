@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { NOTIFY_BASE_URL, OUT_NOTIFY_BASE_URL,  }  from '@/lib/constants';
+import { NOTIFY_BASE_URL, OUT_NOTIFY_BASE_URL, AUTH_TOKEN_KEY } from '@/lib/constants';
+import { retrieveAndDecrypt } from '@/utils/sec';
 
 interface Notification {
   id: string;
@@ -30,9 +31,7 @@ const getBaseUrl = (): string => {
 };
 
 export default function NotificationLog() {
-
     const BASE_URL = getBaseUrl()
-
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
@@ -46,24 +45,50 @@ export default function NotificationLog() {
 
   const isMounted = useRef<boolean>(true);
 
-  const getAuthHeader = useCallback((): HeadersInit => {
-    if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
+  const getAuthHeader = useCallback(async (): Promise<HeadersInit | null> => {
+    if (typeof window === 'undefined') return null;
     try {
-      const token = JSON.parse(localStorage.getItem('auth_tokens') ?? '{}')?.access ?? '';
+      const tokenData = await retrieveAndDecrypt<any>(AUTH_TOKEN_KEY);
+      
+      if (!tokenData) {
+        console.warn(`[getAuthHeader] Key "${AUTH_TOKEN_KEY}" returned empty/null storage data.`);
+        return null;
+      }
+
+      // Check common token payload shapes
+      let token = '';
+      if (typeof tokenData === 'string') {
+        token = tokenData;
+      } else if (typeof tokenData === 'object') {
+        token = tokenData?.access || tokenData?.access_token || tokenData?.token || tokenData?.key || '';
+      }
+
+      if (!token) {
+        console.warn("[getAuthHeader] Decrypted object found, but no access token string matched:", tokenData);
+        return null;
+      }
+
       return {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       };
-    } catch {
-      return { 'Content-Type': 'application/json' };
+    } catch (error) {
+      console.error("[getAuthHeader] Failed retrieving/decrypting token:", error);
+      return null;
     }
   }, []);
 
   const fetchNotificationData = useCallback(async (page: number, activeFilter: FilterType, abortController?: AbortController) => {
     try {
       setLoading(true);
-      const headers = getAuthHeader();
-      
+      const headers = await getAuthHeader();
+
+      // Guard: Abort API request entirely if valid headers are not available
+      if (!headers) {
+        if (isMounted.current) setLoading(false);
+        return;
+      }
+
       // Building backend query parameters
       let url = `${BASE_URL}/?page=${page}`;
       if (activeFilter === 'read') url += '&is_read=true';
@@ -100,7 +125,7 @@ export default function NotificationLog() {
     } finally {
       if (isMounted.current) setLoading(false);
     }
-  }, [getAuthHeader]);
+  }, [BASE_URL, getAuthHeader]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -138,9 +163,12 @@ export default function NotificationLog() {
     }
 
     try {
+      const headers = await getAuthHeader();
+      if (!headers) return; // Prevent request without token
+
       await fetch(`${BASE_URL}/${id}/mark_read/`, {
         method: 'POST',
-        headers: getAuthHeader(),
+        headers,
       });
     } catch (error) {
       console.error("Error setting log entry status:", error);
@@ -157,9 +185,12 @@ export default function NotificationLog() {
     }
 
     try {
+      const headers = await getAuthHeader();
+      if (!headers) return; // Prevent request without token
+
       await fetch(`${BASE_URL}/mark_all_read/`, {
         method: 'POST',
-        headers: getAuthHeader(),
+        headers,
       });
     } catch (error) {
       console.error("Bulk clearing operation failed:", error);

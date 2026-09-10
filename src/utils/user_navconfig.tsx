@@ -33,20 +33,22 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { NavItemType } from '@/utils/config';
+import { USER_DETAILS_KEY } from '@/lib/constants';
+import { retrieveAndDecrypt } from '@/utils/sec';
 
-// This function is for getting user details synchronously
-export const getUserDetails = () => {
+// Retrieve user details asynchronously from the encrypted vault
+export const getUserDetails = async (): Promise<any> => {
   if (typeof window === 'undefined') {
     return null;
   }
 
   try {
-    const userDetailsString = localStorage.getItem('user_details');
-    if (userDetailsString) {
-      return JSON.parse(userDetailsString);
+    const userDetails = await retrieveAndDecrypt<any>(USER_DETAILS_KEY);
+    if (userDetails) {
+      return userDetails;
     }
   } catch (error) {
-    console.error('Error parsing user details from localStorage:', error);
+    console.error('Error retrieving user details from encrypted vault:', error);
   }
   
   return null;
@@ -60,9 +62,9 @@ export const getUserDetailsWithRetry = async (maxAttempts = 10, delayMs = 500): 
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      const userDetailsString = localStorage.getItem('user_details');
-      if (userDetailsString) {
-        return JSON.parse(userDetailsString);
+      const userDetails = await retrieveAndDecrypt<any>(USER_DETAILS_KEY);
+      if (userDetails) {
+        return userDetails;
       }
     } catch (error) {
       console.error('Error parsing user details:', error);
@@ -72,12 +74,12 @@ export const getUserDetailsWithRetry = async (maxAttempts = 10, delayMs = 500): 
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
   
-  console.warn('No user details found in localStorage after', maxAttempts, 'attempts');
+  console.warn('No user details found in encrypted vault after', maxAttempts, 'attempts');
   return null;
 };
 
-// Get current user ID synchronously
-export const getCurrentUserId = (): number | null => {
-  const userDetails = getUserDetails();
-  return userDetails?.user?.id || null;
+// Get current user ID asynchronously
+export const getCurrentUserId = async (): Promise<number | null> => {
+  const userDetails = await getUserDetails();
+  return userDetails?.user?.id ? Number(userDetails.user.id) : null;
 };
