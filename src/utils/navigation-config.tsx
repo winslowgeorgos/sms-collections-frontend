@@ -281,9 +281,7 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
   ];
 };
 
-// For backward compatibility, export a default version that tries to get the current user ID
-export const navItemsWithSectionsSubheadings = getNavItemsWithSections(getCurrentUserId());
-
+export const navItemsWithSectionsSubheadings = getNavItemsWithSections(null);
 // Additional configuration for authentication
 export const authNavItems = [
   {

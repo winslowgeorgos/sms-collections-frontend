@@ -19,6 +19,7 @@ const getBaseUrl = (): string => {
 class APIClient {
   private client: AxiosInstance;
   private isRefreshing = false;
+  private isLoggingOut = false; // Recursion guard flag
   private refreshSubscribers: ((token: string) => void)[] = [];
 
   // In-memory token cache for high-performance, synchronous-like request interceptors
@@ -85,9 +86,10 @@ class APIClient {
       (response: AxiosResponse) => response,
       async (error) => {
         const originalRequest = error.config;
-
         const requestUrl = originalRequest?.url || '';
-        const isAuthRequest = requestUrl.includes('token/');
+
+        // Treat token and logout endpoints as auth requests so 401s never trigger infinite loops
+        const isAuthRequest = requestUrl.includes('token/') || requestUrl.includes('logout');
 
         // Handle network errors
         if (!error.response) {
@@ -96,8 +98,9 @@ class APIClient {
         }
 
         // Handle 401 Unauthorized (token refresh)
-        if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
+        if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest &&!this.isLoggingOut) {
           if (!this.cachedTokens?.refresh) {
+            await this.onRefreshFailure();
             return Promise.reject(error);
           }
 
@@ -155,6 +158,7 @@ class APIClient {
   // Synchronizes in-memory cache with the encrypted IndexedDB vault
   public async setTokens(tokens: AuthTokens | null): Promise<void> {
     this.cachedTokens = tokens;
+    this.isInitialized = true;
     if (typeof window === 'undefined') return;
 
     if (tokens) {
@@ -164,6 +168,11 @@ class APIClient {
     }
   }
 
+  public setAuthTokensSync(tokens: AuthTokens | null): void {
+    this.cachedTokens = tokens;
+    this.isInitialized = true;
+  }
+
   private async refreshToken(): Promise<AuthTokens | null> {
     if (!this.cachedTokens?.refresh) {
       await this.logoutUser();
@@ -171,8 +180,9 @@ class APIClient {
     }
 
     try {
+      const cleanBaseUrl = getBaseUrl().replace(/\/$/, '');
       const response = await axios.post(
-        `${getBaseUrl()}/token/refresh/`,
+        `${cleanBaseUrl}/token/refresh/`,
         { refresh: this.cachedTokens.refresh }
       );
 
@@ -204,32 +214,47 @@ class APIClient {
   private async onRefreshFailure() {
     this.refreshSubscribers = [];
     this.isRefreshing = false;
+    this.cachedTokens = null;
     await this.logoutUser();
   }
 
-  // AUDIT FIX: Guaranteed multi-stage cleanup before redirect
   public async logoutUser(): Promise<void> {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || this.isLoggingOut) return;
+    this.isLoggingOut = true;
+
+    // Capture token before clearing memory
+    const currentAccessToken = this.cachedTokens?.access;
+
+    // Reset memory state immediately
+    this.cachedTokens = null;
+    this.isRefreshing = false;
+    this.refreshSubscribers = [];
 
     try {
-      // Optional: Notify backend to invalidate refresh token
-      await this.client.post('/logout/').catch(() => {});
+      // Notify backend using un-intercepted standalone axios call with explicit Bearer header
+      if (currentAccessToken) {
+        const cleanBaseUrl = getBaseUrl().replace(/\/$/, '');
+        await axios.post(
+          `${cleanBaseUrl}/logout/`,
+          {},
+          {
+            headers: { Authorization: `Bearer ${currentAccessToken}` },
+          }
+        ).catch(() => {}); // Catch and swallow 401s/errors silently so logout always completes
+      }
     } finally {
       try {
-        // Clear Web Crypto session context and memory cache
         clearSecuritySession();
-        this.cachedTokens = null;
 
-        // Ensure all sensitive records are purged from IndexedDB in parallel
         await Promise.all([
-          removeFromDataStore(AUTH_TOKEN_KEY),
-          removeFromDataStore(USER_KEY),
-          removeFromDataStore(USER_DETAILS_KEY),
+          removeFromDataStore(AUTH_TOKEN_KEY).catch(() => {}),
+          removeFromDataStore(USER_KEY).catch(() => {}),
+          removeFromDataStore(USER_DETAILS_KEY).catch(() => {}),
         ]);
       } catch (error) {
         console.error('Error during storage cleanup on logout:', error);
       } finally {
-        // Only redirect after client storage clearance finishes
+        this.isLoggingOut = false;
         if (window.location.pathname !== '/login') {
           window.location.href = '/login';
         }
@@ -242,6 +267,7 @@ class APIClient {
   public async login(username: string, password: string): Promise<AuthTokens> {
     try {
       this.isRefreshing = false;
+      this.isLoggingOut = false;
       this.refreshSubscribers = [];
 
       const response = await this.client.post('/token/', {
