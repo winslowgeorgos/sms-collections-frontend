@@ -9,8 +9,8 @@ import { Modal } from '@/components/ui/modal';
 import { FormInput } from '@/components/forms/FormInput';
 import { apiClient } from '@/lib/api';
 import { Loan } from '@/types/index';
-import { 
-  Plus, Edit, Trash2, Search, Filter, UserPlus, Download, 
+import {
+  Plus, Edit, Trash2, Search, Filter, UserPlus, Download,
   AlertCircle, Calendar, DollarSign, Users, TrendingUp,
   Eye, CheckCircle, XCircle, Clock, RefreshCw, Gavel,
   ShieldAlert, Car, Scale, Ban, Briefcase, FileText, Flag,
@@ -61,6 +61,8 @@ interface LoanFilters {
   repossession_status?: string;
   repossession_status_not?: string;
   to_repossess?: boolean;
+  // PR Bucket (CBK categorization) filter
+  pr_bucket?: string;
   ordering?: string;
   page: number;
   page_size: number;
@@ -105,6 +107,14 @@ const REPOSSESSION_STATUSES = [
   { value: 'disputed', label: 'Disputed', color: 'amber' },
 ];
 
+// PR Bucket (CBK aging categorization) options -- mirrors backend PRBucket choices
+const PR_BUCKETS = [
+  { value: 'PR30', label: '1-30 Days', fullLabel: 'PR 1-30 Days', icon: Clock, color: 'amber' },
+  { value: 'PR31_60', label: '31-60 Days', fullLabel: 'PR 31-60 Days', icon: AlertTriangle, color: 'orange' },
+  { value: 'PR61_90', label: '61-90 Days', fullLabel: 'PR 61-90 Days', icon: AlertCircle, color: 'red' },
+  { value: 'PR90_PLUS', label: '90+ Days', fullLabel: 'Above 90 Days', icon: Flag, color: 'rose' },
+];
+
 export default function LoansPage() {
   const router = useRouter();
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -134,6 +144,7 @@ export default function LoansPage() {
     disburse_date_before: undefined,
     due_date_after: undefined,
     due_date_before: undefined,
+    pr_bucket: undefined,
     ordering: '-disburse_time',
     search: undefined
   });
@@ -158,8 +169,8 @@ export default function LoansPage() {
     fetchLoans();
     fetchLoanStats();
   }, [
-    filters.page, 
-    filters.page_size, 
+    filters.page,
+    filters.page_size,
     filters.officer_id,
     filters.officer_username,
     filters.loan_id,
@@ -199,7 +210,8 @@ export default function LoansPage() {
     filters.repossession_marked_has,
     filters.repossession_status,
     filters.repossession_status_not,
-    filters.to_repossess
+    filters.to_repossess,
+    filters.pr_bucket
   ]);
 
   const fetchLoans = async () => {
@@ -207,7 +219,7 @@ export default function LoansPage() {
     try {
       const client = apiClient.getClient();
       const queryParams = new URLSearchParams();
-      
+
       // Add all filter parameters
       Object.entries(filters).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== '') {
@@ -279,6 +291,7 @@ export default function LoansPage() {
       disburse_date_before: undefined,
       due_date_after: undefined,
       due_date_before: undefined,
+      pr_bucket: undefined,
       ordering: '-disburse_time',
       search: undefined
     });
@@ -303,7 +316,7 @@ export default function LoansPage() {
     try {
       const client = apiClient.getClient();
       const queryParams = new URLSearchParams();
-      
+
       Object.entries(filters).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== '') {
           queryParams.append(key, String(value));
@@ -313,7 +326,7 @@ export default function LoansPage() {
       const response = await client.get(`/loan-processor/loans/export/?${queryParams.toString()}`, {
         responseType: 'blob'
       });
-      
+
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -328,7 +341,7 @@ export default function LoansPage() {
 
   const handleSort = (columnId: string) => {
     let ordering = filters.ordering || '';
-    
+
     if (ordering === columnId) {
       ordering = `-${columnId}`;
     } else if (ordering === `-${columnId}`) {
@@ -336,7 +349,7 @@ export default function LoansPage() {
     } else {
       ordering = columnId;
     }
-    
+
     handleFilterChange('ordering', ordering || undefined);
   };
 
@@ -348,6 +361,14 @@ export default function LoansPage() {
   const applyAdvancedFilters = () => {
     setFilters({ ...tempFilters, page: 1 });
     setIsFilterModalOpen(false);
+  };
+
+  // Helper: format a currency value consistently, keeping 2 decimals
+  // (small figures like commission -- e.g. KSh 63.21 -- need the decimals,
+  // unlike the larger amount columns which used toLocaleString() with no decimals)
+  const formatCurrency2dp = (value: string | number | undefined | null) => {
+    const amount = parseFloat(String(value ?? '0')) || 0;
+    return `KSh ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   // Helper function to get collection condition badge
@@ -366,7 +387,7 @@ export default function LoansPage() {
       emerald: 'bg-emerald-100 text-emerald-800 border-emerald-200',
     };
     const colorClass = colorMap[found?.color || 'gray'];
-    
+
     return (
       <Badge className={`${colorClass} gap-1`}>
         <Icon size={12} />
@@ -387,10 +408,33 @@ export default function LoansPage() {
       purple: 'bg-purple-100 text-purple-800',
       amber: 'bg-amber-100 text-amber-800',
     };
-    
+
     return (
       <Badge className={`${colorMap[found?.color || 'gray']} gap-1`}>
         {found?.label || status || 'Not Started'}
+      </Badge>
+    );
+  };
+
+  // Helper function to get PR bucket (CBK categorization) badge
+  const getPRBucketBadge = (bucket: string | null | undefined) => {
+    if (!bucket) {
+      return <span className="text-gray-400 text-sm">Not categorized</span>;
+    }
+    const found = PR_BUCKETS.find(b => b.value === bucket);
+    const Icon = found?.icon || AlertTriangle;
+    const colorMap: Record<string, string> = {
+      amber: 'bg-amber-100 text-amber-800 border-amber-200',
+      orange: 'bg-orange-100 text-orange-800 border-orange-200',
+      red: 'bg-red-100 text-red-800 border-red-200',
+      rose: 'bg-rose-100 text-rose-900 border-rose-200',
+    };
+    const colorClass = colorMap[found?.color || 'amber'];
+
+    return (
+      <Badge className={`${colorClass} gap-1`}>
+        <Icon size={12} />
+        {found?.label || bucket}
       </Badge>
     );
   };
@@ -425,6 +469,13 @@ export default function LoansPage() {
       width: 120,
     },
     {
+      id: 'registration_number',
+      label: 'Registration Number',
+      accessor: (row: Loan) => row.registration_number,
+      width: 140,
+      sortable: true,
+    },
+    {
       id: 'total_amount',
       label: 'Total Amount',
       accessor: (row: Loan) => row.total_amount,
@@ -442,7 +493,7 @@ export default function LoansPage() {
         const outstanding = parseFloat(value);
         const total = parseFloat(row.total_amount);
         const percentage = total > 0 ? (outstanding / total) * 100 : 0;
-        
+
         return (
           <div>
             <span className={outstanding > 0 ? 'text-amber-700 font-medium' : 'text-green-700'}>
@@ -482,11 +533,11 @@ export default function LoansPage() {
         const dueDate = new Date(value);
         const today = new Date();
         const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        
+
         let colorClass = 'text-gray-600';
         if (daysUntilDue < 0) colorClass = 'text-red-700 font-medium';
         else if (daysUntilDue <= 7) colorClass = 'text-orange-700';
-        
+
         return (
           <div className={colorClass}>
             {dueDate.toLocaleDateString()}
@@ -512,7 +563,7 @@ export default function LoansPage() {
       Cell: (value: string, row: Loan) => {
         const isOverdue = row.current_month_installment_due_date ? new Date(row.current_month_installment_due_date) < new Date() && parseFloat(row.current_month_total_due || '0') > 0 && row.has_current_month_installment === true : false;
         const hasOutstanding = parseFloat(row.current_month_total_due || '0') > 0;
-        
+
         if (row.has_current_month_installment === false) {
           return (
             <Badge variant="secondary" className="gap-1">
@@ -594,6 +645,77 @@ export default function LoansPage() {
       accessor: (row: Loan) => row.repossession_status,
       Cell: (value: string, row: Loan) => getRepossessionStatusBadge(row.repossession_status),
       width: 140,
+    },
+    {
+      id: 'pr_bucket',
+      label: 'PR Bucket',
+      accessor: (row: Loan) => row.pr_bucket,
+      Cell: (value: string | null, row: Loan) => getPRBucketBadge(row.pr_bucket),
+      width: 130,
+      sortable: true,
+    },
+    {
+      id: 'loan_percentaged_target',
+      label: 'Target / Commission',
+      accessor: (row: Loan) => row.loan_percentaged_target,
+      Cell: (value: string, row: Loan) => (
+        <div className="text-sm">
+          <div>
+            <span className="text-gray-500 text-xs">Target: </span>
+            <span className="font-medium">{formatCurrency2dp(row.loan_percentaged_target)}</span>
+          </div>
+          <div>
+            <span className="text-gray-500 text-xs">Commission: </span>
+            <span className="font-medium text-emerald-700">{formatCurrency2dp(row.loan_commission)}</span>
+          </div>
+        </div>
+      ),
+      width: 190,
+      sortable: true,
+    },
+    //separate target/commission into two columns for better visibility
+    {
+      id: 'loan_percentaged_target',
+      label: 'Target',
+      accessor: (row: Loan) => row.loan_percentaged_target,
+      Cell: (value: string) => (
+        <span className="font-medium">{formatCurrency2dp(value)}</span>
+      ),
+    },
+    {
+      id: 'loan_commission',
+      label: 'Commission',
+      accessor: (row: Loan) => row.loan_commission,
+      Cell: (value: string) => (
+        <span className="font-medium text-emerald-700">{formatCurrency2dp(value)}</span>
+      ),
+    },
+    {
+      id: 'total_repayments',
+      label: 'Total Repayments',
+      accessor: (row: Loan) => row.total_repayments,
+      Cell: (value: string) => (
+        <span className="font-medium">KSh {parseFloat(value).toLocaleString()}</span>
+      ),
+      width: 130,
+      sortable: true,
+    },
+    {
+      id: 'last_payment_amount',
+      label: 'Loan Payment Amount',
+      accessor: (row: Loan) => row.last_payment_amount,
+      Cell: (value: string) => (
+        <span className="font-medium">KSh {parseFloat(value).toLocaleString()}</span>
+      ),
+      width: 130,
+      sortable: true,
+    },
+    {
+      id: 'last_payment_date',
+      label: 'Last Payment Date',
+      accessor: (row: Loan) => row.last_payment_date ? new Date(row.last_payment_date).toLocaleDateString() : '-',
+      width: 110,
+      sortable: true,
     },
     {
       id: 'assigned_at',
@@ -678,8 +800,8 @@ export default function LoansPage() {
             </div>
           </CardContent>
         </Card>
-        
-        {/* <Card>
+
+        <Card>
           <CardContent className="pt-6">
             <div className="flex items-center">
               <div className="rounded-full bg-purple-100 p-3 mr-4">
@@ -693,36 +815,9 @@ export default function LoansPage() {
               </div>
             </div>
           </CardContent>
-        </Card> */}
-        
-        {/* <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center">
-              <div className="rounded-full bg-red-100 p-3 mr-4">
-                <AlertCircle className="h-6 w-6 text-red-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Overdue</p>
-                <p className="text-2xl font-bold text-gray-900">{stats?.overdue_installments}</p>
-              </div>
-            </div>
-          </CardContent>
         </Card>
-        
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center">
-              <div className="rounded-full bg-green-100 p-3 mr-4">
-                <Calendar className="h-6 w-6 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Current Month</p>
-                <p className="text-2xl font-bold text-gray-900">{stats?.current_month_installments}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card> */}
-{/*         
+
+
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center">
@@ -737,33 +832,18 @@ export default function LoansPage() {
               </div>
             </div>
           </CardContent>
-        </Card> */}
+        </Card>
 
-        {/* <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center">
-              <div className="rounded-full bg-orange-100 p-3 mr-4">
-                <Gavel className="h-6 w-6 text-orange-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">Marked Repo</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {loans.filter(l => l.to_repossess === true).length}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card> */}
       </div>
 
       {/* Quick Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium text-gray-700">Quick Filters:</span>
-        {(Object.keys(filters).some(key => 
-          filters[key as keyof LoanFilters] !== undefined && 
-          filters[key as keyof LoanFilters] !== '' && 
-          key !== 'page' && 
-          key !== 'page_size' && 
+        {(Object.keys(filters).some(key =>
+          filters[key as keyof LoanFilters] !== undefined &&
+          filters[key as keyof LoanFilters] !== '' &&
+          key !== 'page' &&
+          key !== 'page_size' &&
           key !== 'ordering' &&
           key !== 'cumulative_balance_gt_zero'
         )) && (
@@ -930,8 +1010,8 @@ export default function LoansPage() {
                   value={tempFilters.is_overdue === undefined ? '' : String(tempFilters.is_overdue)}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setTempFilters(prev => ({ 
-                      ...prev, 
+                    setTempFilters(prev => ({
+                      ...prev,
                       is_overdue: value === '' ? undefined : value === 'true'
                     }));
                   }}
@@ -950,8 +1030,8 @@ export default function LoansPage() {
                   value={tempFilters.cumulative_balance_gt_zero === undefined ? '' : String(tempFilters.cumulative_balance_gt_zero)}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setTempFilters(prev => ({ 
-                      ...prev, 
+                    setTempFilters(prev => ({
+                      ...prev,
                       cumulative_balance_gt_zero: value === '' ? undefined : value === 'true'
                     }));
                   }}
@@ -1023,8 +1103,8 @@ export default function LoansPage() {
                   value={tempFilters.to_repossess === undefined ? '' : String(tempFilters.to_repossess)}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setTempFilters(prev => ({ 
-                      ...prev, 
+                    setTempFilters(prev => ({
+                      ...prev,
                       to_repossess: value === '' ? undefined : value === 'true'
                     }));
                   }}
@@ -1043,8 +1123,8 @@ export default function LoansPage() {
                   value={tempFilters.actual_repossessed === undefined ? '' : String(tempFilters.actual_repossessed)}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setTempFilters(prev => ({ 
-                      ...prev, 
+                    setTempFilters(prev => ({
+                      ...prev,
                       actual_repossessed: value === '' ? undefined : value === 'true'
                     }));
                   }}
@@ -1093,8 +1173,8 @@ export default function LoansPage() {
                   value={tempFilters.auto_escalated_has === undefined ? '' : String(tempFilters.auto_escalated_has)}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setTempFilters(prev => ({ 
-                      ...prev, 
+                    setTempFilters(prev => ({
+                      ...prev,
                       auto_escalated_has: value === '' ? undefined : value === 'true'
                     }));
                   }}
@@ -1113,8 +1193,8 @@ export default function LoansPage() {
                   value={tempFilters.repossession_marked_has === undefined ? '' : String(tempFilters.repossession_marked_has)}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setTempFilters(prev => ({ 
-                      ...prev, 
+                    setTempFilters(prev => ({
+                      ...prev,
                       repossession_marked_has: value === '' ? undefined : value === 'true'
                     }));
                   }}
@@ -1192,6 +1272,32 @@ export default function LoansPage() {
                   onChange={(e) => setTempFilters(prev => ({ ...prev, auto_escalated_before: e.target.value || undefined }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* PR Bucket / Target & Commission Filters */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2 flex items-center gap-2">
+              <TrendingUp size={16} className="text-amber-500" />
+              PR Bucket (CBK Categorization)
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  PR Bucket
+                </label>
+                <select
+                  value={tempFilters.pr_bucket || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, pr_bucket: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="">All Buckets</option>
+                  {PR_BUCKETS.map(bucket => (
+                    <option key={bucket.value} value={bucket.value}>{bucket.fullLabel}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">CBK aging bucket used for target % / commission %</p>
               </div>
             </div>
           </div>
@@ -1328,6 +1434,10 @@ export default function LoansPage() {
                 <option value="-auto_escalated_at">Auto Escalated First</option>
                 <option value="-collection_condition">Collection Status</option>
                 <option value="-repossession_status">Repossession Status</option>
+                <option value="pr_bucket">PR Bucket (1-30 first)</option>
+                <option value="-pr_bucket">PR Bucket (90+ first)</option>
+                <option value="-loan_percentaged_target">Percentaged Target (Highest first)</option>
+                <option value="-loan_commission">Commission (Highest first)</option>
               </select>
             </div>
           </div>

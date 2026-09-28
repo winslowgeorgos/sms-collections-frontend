@@ -3,7 +3,9 @@
 
 import { usePathname } from 'next/navigation';
 import { SidebarNavigationSectionsSubheadings } from '@/components/ui/sidebarnav';
-import { navItemsWithSectionsSubheadings } from '@/utils/navigation-config';
+import { getNavItemsWithSections } from '@/utils/navigation-config';
+// Must be the SAME registry file you edited (the new labels live there). If your registry is in
+// src/config/, change this to '@/config/permission-registry'.
 import { navItemPermissions } from '@/utils/permission-registry';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/context/permission-context';
@@ -15,6 +17,8 @@ import { Button } from '@/components/ui/button';
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
 }
+
+type NavSections = ReturnType<typeof getNavItemsWithSections>;
 
 export function ClientLayoutWrapper({ children }: ClientLayoutWrapperProps) {
   const pathname = usePathname();
@@ -34,24 +38,32 @@ export function ClientLayoutWrapper({ children }: ClientLayoutWrapperProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter navigation items based on user permissions
-  const filteredNavItems = useMemo(() => {
-    if (!userDetails) return [];
-    const isSuperuser = userDetails.user.is_superuser;
+  const userId = userDetails?.user?.id ?? null;
+  const isSuperuser = !!userDetails?.user?.is_superuser;
 
-    return navItemsWithSectionsSubheadings
-      .map(section => {
-        const filteredItems = section.items.filter(item => {
+  // Build the nav for THIS user (so "My Analytics" gets the real id), then filter by permission.
+  const filteredNavItems = useMemo<NavSections>(() => {
+    if (!userDetails) return [];
+
+    const sections = getNavItemsWithSections(userId);
+    if (!Array.isArray(sections)) {
+      console.error('[ClientLayoutWrapper] getNavItemsWithSections() did not return an array:', sections);
+      return [];
+    }
+
+    return sections
+      .map((section) => {
+        const items = section.items.filter((item) => {
           if (isSuperuser) return true;
           const requirement = navItemPermissions[item.label];
+          // Items with no registry entry are visible to everyone — register every new link.
           if (!requirement) return true;
           return hasAccess(requirement);
         });
-        if (filteredItems.length === 0) return null;
-        return { ...section, items: filteredItems };
+        return items.length > 0 ? { ...section, items } : null;
       })
-      .filter(Boolean) as typeof navItemsWithSectionsSubheadings;
-  }, [userDetails, hasAccess]);
+      .filter((s): s is NavSections[number] => s !== null);
+  }, [userDetails, userId, isSuperuser, hasAccess]);
 
   const isAuthPage = pathname?.startsWith('/login') || pathname?.startsWith('/auth');
   if (isAuthPage) return <>{children}</>;
@@ -87,19 +99,18 @@ export function ClientLayoutWrapper({ children }: ClientLayoutWrapperProps) {
         {/* Top Header with Notification Bell */}
         <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-3 flex justify-between items-center">
           <div className="flex items-center">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-              {pathname?.split('/')[1]?.replace(/-/g, ' ') || 'Dashboard'}
+            <h2 className="text-lg font-semibold capitalize text-gray-800 dark:text-gray-100">
+              {pathname?.split('/')[1]?.replace(/[-_]/g, ' ') || 'Dashboard'}
             </h2>
           </div>
           <div className="flex items-center space-x-4">
             <NotificationBell />
-            {/* Custom User Dropdown */}
             <div className="relative" ref={menuRef}>
               <Button
                 variant="ghost"
                 size="sm"
                 className="rounded-full"
-                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                onClick={() => setUserMenuOpen((open) => !open)}
               >
                 <User className="h-5 w-5" />
               </Button>

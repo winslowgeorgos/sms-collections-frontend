@@ -1,9 +1,10 @@
-// components/ui/sidebar.tsx
+// components/layout/sidebar.tsx
 'use client';
 
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/context/permission-context';
-import { navItemsWithSectionsSubheadings } from '@/utils/navigation-config';
+import { getNavItemsWithSections } from '@/utils/navigation-config';
+// Use the same registry file as client-layout-wrapper.tsx (the one with the new labels).
 import { navItemPermissions } from '@/utils/permission-registry';
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
@@ -12,48 +13,36 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { NavItemType } from '@/utils/config';
 
+type NavSection = { label: string; items: NavItemType[] };
+
 interface SidebarProps {
   collapsed?: boolean;
 }
 
 export function Sidebar({ collapsed = false }: SidebarProps) {
-  const pathname = usePathname();
+  const pathname = usePathname() || '/';
   const { userDetails } = useAuth();
   const { hasAccess, isLoading } = usePermissions();
 
-  // Filter navigation items based on user permissions
-  const filteredNavItems = useMemo(() => {
+  const userId = userDetails?.user?.id ?? null;
+  const isSuperuser = !!userDetails?.user?.is_superuser;
+
+  // Build the nav synchronously for the logged-in user, then filter by permission.
+  const filteredNavItems = useMemo<NavSection[]>(() => {
     if (!userDetails) return [];
 
-    const isSuperuser = userDetails.user.is_superuser;
-
-    return navItemsWithSectionsSubheadings
-      .map(section => {
-        // Filter items within the section
-        const filteredItems = section.items.filter(item => {
-          // Superuser sees everything
+    return getNavItemsWithSections(userId)
+      .map((section): NavSection | null => {
+        const items = section.items.filter((item) => {
           if (isSuperuser) return true;
-
-          // Look up required permission(s) from the registry
           const requirement = navItemPermissions[item.label];
-          // If no requirement, item is visible to everyone
-          if (!requirement) return true;
-
-          // Use the unified permission check
+          if (!requirement) return true; // unregistered items are visible to everyone
           return hasAccess(requirement);
         });
-
-        if (filteredItems.length === 0) {
-          return null;
-        }
-
-        return {
-          ...section,
-          items: filteredItems,
-        };
+        return items.length > 0 ? { ...section, items } : null;
       })
-      .filter(Boolean) as typeof navItemsWithSectionsSubheadings;
-  }, [userDetails, hasAccess]);
+      .filter((section): section is NavSection => section !== null);
+  }, [userDetails, userId, isSuperuser, hasAccess]);
 
   if (isLoading) {
     return (
@@ -69,9 +58,9 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         <span className="text-lg font-bold">Logo</span>
       </div>
       <nav className="flex-1 space-y-4 px-2 py-4">
-        {filteredNavItems.map((section, index) => (
+        {filteredNavItems.map((section) => (
           <SidebarSection
-            key={index}
+            key={section.label}
             label={section.label}
             items={section.items}
             collapsed={collapsed}
@@ -106,17 +95,13 @@ function SidebarSection({ label, items, collapsed, pathname }: SidebarSectionPro
   return (
     <div className="space-y-2">
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => setIsExpanded((v) => !v)}
         className="flex w-full items-center justify-between px-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hover:text-gray-700"
       >
         <span>{label}</span>
-        {isExpanded ? (
-          <ChevronDown className="h-3 w-3" />
-        ) : (
-          <ChevronRight className="h-3 w-3" />
-        )}
+        {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       </button>
-      
+
       {isExpanded && (
         <div className="space-y-1">
           {items.map((item) => (
@@ -133,8 +118,14 @@ interface NavItemProps {
   pathname: string;
 }
 
+/** Match on the path only — hrefs like "/loan-processor/escalations?tab=all" carry a query string. */
+function isActivePath(pathname: string, href: string): boolean {
+  const path = href.split('?')[0];
+  return pathname === path || pathname.startsWith(path + '/');
+}
+
 function NavItem({ item, pathname }: NavItemProps) {
-  const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+  const isActive = isActivePath(pathname, item.href);
   const Icon = item.icon;
 
   return (
@@ -142,9 +133,7 @@ function NavItem({ item, pathname }: NavItemProps) {
       href={item.href}
       className={cn(
         'flex items-center justify-between rounded-md px-3 py-2 text-sm font-medium transition-colors',
-        isActive
-          ? 'bg-accent-50 text-accent-700'
-          : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+        isActive ? 'bg-accent-50 text-accent-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
       )}
     >
       <div className="flex items-center gap-3">
@@ -157,7 +146,7 @@ function NavItem({ item, pathname }: NavItemProps) {
 }
 
 function NavItemCollapsed({ item, pathname }: NavItemProps) {
-  const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+  const isActive = isActivePath(pathname, item.href);
   const Icon = item.icon;
 
   return (
@@ -165,9 +154,7 @@ function NavItemCollapsed({ item, pathname }: NavItemProps) {
       href={item.href}
       className={cn(
         'flex items-center justify-center rounded-md p-2 transition-colors',
-        isActive
-          ? 'bg-accent-50 text-accent-700'
-          : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+        isActive ? 'bg-accent-50 text-accent-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
       )}
       title={item.label}
     >

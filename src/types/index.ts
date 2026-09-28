@@ -1,4 +1,3 @@
-
 // types/index.ts
 
 export interface Permission {
@@ -174,7 +173,7 @@ export interface SMSLog {
   status_color?: string;
   error_message: string;
   sent_at: string | null;
-  
+
   // New fields for external integration
   external_id: string | null;
   customer_id: string | null;
@@ -184,18 +183,18 @@ export interface SMSLog {
   response_code: string | null;
   installment_number: string | null;
   message_hash: string | null;
-  
+
   // New fields for tracking which specific product/day was used
   used_product: string | null;  // Product ID
   used_product_name: string | null;  // Product name for display
   used_day: string | null;  // Day ID
   used_day_name: string | null;  // Day name for display
-  
+
   // New fields for campaign tracking
   is_from_campaign: boolean;
   campaign: string | null;  // Campaign ID
   campaign_name: string | null;  // Campaign name for display
-  
+
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -361,7 +360,7 @@ export interface Loan {
   created_at: string;
   updated_at: string;
   last_sync_at: string;
-  
+
   // ============ ESCALATION/REPOSSESSION FIELDS ============
   to_repossess: boolean;
   actual_repossessed: boolean;
@@ -373,7 +372,7 @@ export interface Loan {
   repossession_completed_at: string | null;
   auto_escalated_at: string | null;
   repossession_notes: string | null;
-  
+
   // ============ YARD TRACKING FIELDS ============
   yard_location: YardLocation | null;
   yard_location_id: number | null;
@@ -381,6 +380,17 @@ export interface Loan {
   yard_notes: string | null;
   yard_display_name: string | null;
   yard_full_location: string | null;
+
+  // ============ REPAYMENT METRICS ============
+  last_payment_date: string | null;
+  last_payment_amount: string | null;
+  total_repayments: string;
+  total_repayment_count: number;
+
+  // ============ PR BUCKET / TARGET & COMMISSION (CBK CATEGORIZATION) ============
+  pr_bucket: string | null;
+  loan_percentaged_target: string;
+  loan_commission: string;
 }
 
 // ============ ESCALATION REQUEST TYPES ============
@@ -627,6 +637,82 @@ export type CollectionConditionValue = typeof COLLECTION_CONDITIONS[number]['val
 export type RepossessionStatusValue = typeof REPOSSESSION_STATUSES[number]['value'];
 export type EscalationReasonValue = typeof ESCALATION_REASONS[number]['value'];
 
+// ============ PR BUCKET (CBK CATEGORIZATION) HELPER ============
+// Mirrors backend PRBucket / PRBucketTeam choices (loan_processor/models.py)
+
+export const PR_BUCKETS = [
+  { value: 'CURRENT', label: 'Current (Not Yet Due)', shortLabel: 'Current', color: 'green' },
+  { value: 'PR30', label: 'PR 1-30 Days', shortLabel: '1-30 Days', color: 'amber' },
+  { value: 'PR31_60', label: 'PR 31-60 Days', shortLabel: '31-60 Days', color: 'orange' },
+  { value: 'PR61_90', label: 'PR 61-90 Days', shortLabel: '61-90 Days', color: 'red' },
+  { value: 'PR90_PLUS', label: 'Above 90 Days', shortLabel: '90+ Days', color: 'rose' },
+] as const;
+
+// Preferred display order for PR bucket breakdowns (least to most overdue)
+export const PR_BUCKET_ORDER = ['CURRENT', 'PR30', 'PR31_60', 'PR61_90', 'PR90_PLUS'] as const;
+
+// ============ PR BUCKET METRICS (shared shape returned by dashboard/metrics endpoints) ============
+// Matches the `pr_bucket_metrics` block returned by:
+//   /loan-processor/dashboard/, /loan-processor/metrics/current-month/, /loan-processor/metrics/current-week/,
+//   /loan-processor/metrics/officer/{id}/month/, /loan-processor/metrics/officer/{id}/week/,
+//   /loan-processor/officer-performance/ (per officer, under metrics.pr_bucket_metrics)
+
+export interface PRBucketBreakdownEntry {
+  daily_target: number;
+  monthly_target: number;
+  daily_posted: number;
+  monthly_posted: number;
+  daily_commission: number;
+  monthly_commission: number;
+}
+
+export interface PRBucketMetrics {
+  daily_percentaged_target: number;
+  monthly_percentaged_target: number;
+  daily_posted: number;
+  monthly_posted: number;
+  daily_commission: number;
+  monthly_commission: number;
+  pr_bucket_breakdown: Partial<Record<PRBucketValue, PRBucketBreakdownEntry>>;
+}
+
+// Shape used by /loan-processor/analytics/performance-trends/ (period-level, not daily/monthly split)
+export interface PRBucketTrendBreakdownEntry {
+  target: number;
+  posted: number;
+  commission: number;
+}
+
+export interface PRBucketTrendMetrics {
+  percentaged_target: number;
+  posted: number;
+  commission: number;
+  pr_bucket_breakdown: Partial<Record<PRBucketValue, PRBucketTrendBreakdownEntry>>;
+}
+
+export const PR_BUCKET_TEAMS = [
+  { value: 'collections', label: 'Collections', color: 'blue' },
+  { value: 'auctioneer', label: 'Auctioneer', color: 'amber' },
+  { value: 'third_party', label: 'Third Party', color: 'indigo' },
+  { value: 'legal', label: 'Legal', color: 'purple' },
+] as const;
+
+export type PRBucketValue = typeof PR_BUCKETS[number]['value'];
+export type PRBucketTeamValue = typeof PR_BUCKET_TEAMS[number]['value'];
+
+// Tailwind class lookup for PR bucket badges/cards, keyed by the `color` field above.
+export const PR_BUCKET_COLOR_CLASSES: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+  green: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
+  amber: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
+  orange: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', dot: 'bg-orange-500' },
+  red: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' },
+  rose: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', dot: 'bg-rose-500' },
+};
+
+export function getPRBucketMeta(value: string) {
+  return PR_BUCKETS.find((b) => b.value === value) ?? { value, label: value, shortLabel: value, color: 'gray' as const };
+}
+
 // ============ ESCALATED LOANS RESPONSE ============
 
 export interface EscalatedLoansResponse {
@@ -840,4 +926,65 @@ export interface EscalationApiResponse {
   loans: EscalationRecord[];
   total_count: number;
   summary: EscalationSummary;
+}
+
+// ============ INSTALLMENT TYPES ============
+// Matches InstallmentBasicSerializer / InstallmentDetailSerializer (loan_processor/serializers.py)
+
+export interface PaymentProgress {
+  percentage: number;
+  repaid: number;
+  total: number;
+  status: string;
+}
+
+export interface Installment {
+  id: string;
+  installment_id: number;
+  plan_id: string | null;
+  plan_type: string;
+  plan_type_display: string;
+  main_loan: string;
+  loan_id: string;
+  customer_name: string;
+  phone_number: string;
+  total_amount: string;
+  repaid: string;
+  balance: string;
+  cumulative_balance: string;
+  due_date: string;
+  start_date: string;
+  actual_repay_date: string | null;
+  days_until_due: number;
+  days_until_due_display: string;
+  is_overdue: boolean;
+  is_current_month: boolean;
+  paid_off: boolean;
+  partially_paid: boolean;
+  principal_due: string;
+  principal_paid: string;
+  interest_due: string;
+  interest_paid: string;
+  penalty_due: string;
+  penalty_paid: string;
+  assigned_officer: number | null;
+  assigned_officer_details: OfficerDetails | null;
+  status: number;
+  status_text: string;
+  is_active: boolean;
+  payment_progress: PaymentProgress;
+  created_at: string;
+  updated_at: string;
+
+  // ============ PR BUCKET (CBK CATEGORIZATION) FIELDS ============
+  actual_installment_due_days: number;
+  pr_bucket: string | null;
+  pr_bucket_team: string | null;
+  percentaged_target: string;
+  percentaged_target_updated_at: string | null;
+  installment_commission: string;
+  // Monthly baseline used to scope installment_commission to amounts posted
+  // in the current calendar month only (see MIGRATION_NOTES.md)
+  commission_baseline_repaid: string;
+  commission_baseline_at: string | null;
 }

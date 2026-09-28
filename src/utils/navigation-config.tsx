@@ -1,44 +1,38 @@
 // utils/navigation-config.tsx
-import { 
-  BarChart3, 
-  Calendar, 
-  Settings, 
-  FileText, 
-  PieChart, 
-  LayoutGrid, 
+import {
+  Calendar,
+  Settings,
+  FileText,
+  LayoutGrid,
   Users,
   Shield,
   Database,
   MessageSquare,
-  ChevronRight,
-  DollarSign,
   FolderOpen,
   UserCheck,
   UserPlus,
   PhoneCall,
-  Clock,
   AlertCircle,
   TrendingUp,
-  Award,
   ListTodo,
   Bell,
   Activity,
   Server,
   Zap,
-  Eye,
-  CheckSquare,
-  XCircle,
   Home,
   BarChart,
-  ShieldAlert, // Imported for Escalation Management icons
-  UserX
+  ShieldAlert,
+  Receipt,
+  ClipboardList,
+  Gavel,
+  ListChecks,
 } from 'lucide-react';
-import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import type { NavItemType } from '@/utils/config';
-import {getCurrentUserId} from '@/utils/user_navconfig'
+import { getCurrentUserId } from '@/utils/user_navconfig';
 
-// Create a function that returns navigation items with dynamic routes
+// NOTE: item labels are the keys used by navItemPermissions in config/permission-registry.ts —
+// rename both together.
 export const getNavItemsWithSections = (userId?: number | null): Array<{ label: string; items: NavItemType[] }> => {
   const myAnalyticsHref = userId ? `/analytics/officer/${userId}` : '/analytics/officer/me';
 
@@ -97,6 +91,16 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
           ),
         },
         {
+          label: "All Installments",
+          href: "/installments",
+          icon: Receipt,
+        },
+        {
+          label: "My Installments",
+          href: "/my_installments",
+          icon: ClipboardList,
+        },
+        {
           label: "Assigned Loans",
           href: "/loan-processor/assigned",
           icon: Users,
@@ -119,30 +123,40 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
       ],
     },
     {
-  label: "ESCALATION MANAGEMENT",
-  items: [
-    {
-      label: "All Escalations",
-      href: "/loan-processor/escalations?tab=all_escalations", 
-      icon: ShieldAlert,
-      badge: (
-        <Badge size="sm" variant="error">
-          5
-        </Badge>
-      ),
+      label: "ESCALATION MANAGEMENT",
+      items: [
+        {
+          label: "Escalation Portal",
+          href: "/escalation_portal",
+          icon: Gavel,
+        },
+        {
+          label: "Escalation Requests",
+          href: "/escalation_portal/list",
+          icon: ListChecks,
+        },
+        {
+          label: "All Escalations",
+          href: "/loan-processor/escalations?tab=all_escalations",
+          icon: ShieldAlert,
+          badge: (
+            <Badge size="sm" variant="error">
+              5
+            </Badge>
+          ),
+        },
+        {
+          label: "My Escalations",
+          href: "/loan-processor/escalations?tab=my_escalations",
+          icon: ShieldAlert,
+          badge: (
+            <Badge size="sm" variant="warning">
+              2
+            </Badge>
+          ),
+        },
+      ],
     },
-    {
-      label: "My Escalations",
-      href: "/loan-processor/escalations?tab=my_escalations",
-      icon: ShieldAlert,
-      badge: (
-        <Badge size="sm" variant="warning">
-          2
-        </Badge>
-      ),
-    },
-  ],
-},
     {
       label: "Call Management",
       items: [
@@ -175,7 +189,7 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
           label: "All Reminders",
           href: "/payment-reminders",
           icon: Bell,
-        }
+        },
       ],
     },
     {
@@ -240,7 +254,7 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
           label: "Template Variable Manual",
           href: "/template/sms-template-manual",
           icon: FileText,
-        }
+        },
       ],
     },
     {
@@ -282,7 +296,7 @@ export const getNavItemsWithSections = (userId?: number | null): Array<{ label: 
 };
 
 // For backward compatibility, export a default version that tries to get the current user ID
-export const navItemsWithSectionsSubheadings = getNavItemsWithSections(getCurrentUserId());
+export const navItemsWithSectionsSubheadings = getCurrentUserId().then(userId => getNavItemsWithSections(userId));
 
 // Additional configuration for authentication
 export const authNavItems = [
@@ -304,34 +318,40 @@ export const routeConfig = {
   dashboard: "/dashboard",
   adminDashboard: "/analytics/admin",
   officerAnalytics: (id: string | number) => `/analytics/officer/${id}`,
-  
+
   // Loan routes
   loans: "/loans",
   myLoans: "/loan-processor/my-loans",
   assignedLoans: "/loan-processor/assigned",
   unassignedLoans: "/loan-processor/unassigned",
   loanDetails: (id: string) => `/loans/${id}`,
+
+  // Installment routes
+  installments: "/installments",
+  myInstallments: "/my_installments",
   installmentDetails: (id: string) => `/installments/${id}`,
-  
- 
-  
+
+  // Escalation routes
+  escalationPortal: "/escalation_portal",
+  escalationList: "/escalation_portal/list",
+
   // Call log routes
   callLogs: "/call_logs",
   allCalls: "/call_logs/all",
   myCalls: "/call_logs/my_calls",
   followUpTasks: "/call_logs/follow_up",
   callLogDetails: (id: string) => `/call_logs/${id}`,
-  
+
   // Payment reminder routes
   paymentReminders: "/payment-reminders",
   paymentReminderDetails: (id: string) => `/payment-reminders/${id}`,
-  
+
   // Analytics routes
   jobMonitor: "/analytics/jobs",
   smsAnalytics: "/sms-analytics",
   loanStatistics: "/loan-processor/loan_statistics",
   officerPerformance: "/loan-processor/officer-performance",
-  
+
   // Other routes
   flaggedCustomers: "/flaggedcustomers",
   collectionStatus: "/collection-status",

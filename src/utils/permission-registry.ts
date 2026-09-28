@@ -6,6 +6,14 @@ export type PermissionRequirement =
   | string[]              // any of these
   | { permissions: string | string[]; requireAll?: boolean }; // fine control
 
+// Anyone who takes part in the escalation workflow can open the portal.
+const ESCALATION_PORTAL_ACCESS = [
+  'can_create_escalation_request',
+  'can_view_all_escalations',
+  'can_approve_escalations',
+  'can_execute_escalations',
+];
+
 // Route-based permissions (exact paths or patterns like '/loans/[id]')
 export const routePermissions: Record<string, PermissionRequirement> = {
   // Dashboard
@@ -16,10 +24,18 @@ export const routePermissions: Record<string, PermissionRequirement> = {
 
   // Loans
   '/loans': 'can_view_allmainloan_page',
-  '/loans/[id]': 'can_view_loandetails',          // use mapped flag (user has it)
-  '/installments/[id]': 'can_view_installment_page', // user has it
-  '/loan-processor/unassigned':  'can_view_unassigned_page',
+  '/loans/[id]': 'can_view_loandetails',
+  '/loan-processor/unassigned': 'can_view_unassigned_page',
   '/loan-processor/assigned': 'can_view_assigned_page',
+
+  // Installments
+  '/installments': 'can_view_installmets_list_page',
+  '/installments/[id]': 'can_view_installment_page',
+  '/my_installments': 'can_view_my_installments_list_page',
+
+  // Escalations
+  '/escalation_portal': ESCALATION_PORTAL_ACCESS,
+  '/escalation_portal/list': ESCALATION_PORTAL_ACCESS,
 
   // Call logs
   '/call_logs/all': 'can_view_all_call_logs',
@@ -50,7 +66,7 @@ export const routePermissions: Record<string, PermissionRequirement> = {
   '/settings': 'change_scheduledjobconfig',
 };
 
-// Navigation item permissions (by label)
+// Navigation item permissions (by label — must match the labels in utils/navigation-config.tsx)
 export const navItemPermissions: Record<string, PermissionRequirement> = {
   'Collections Dashboard': 'can_view_admin_dashboard',
   'My Analytics': 'can_view_myanalytics',
@@ -60,6 +76,10 @@ export const navItemPermissions: Record<string, PermissionRequirement> = {
   'My Loans': 'can_view_myloans_page',
   'Assigned Loans': 'can_view_assigned_page',
   'Unassigned Loans': { permissions: ['can_view_unassigned_page'], requireAll: true },
+  'All Installments': 'can_view_installmets_list_page',
+  'My Installments': 'can_view_my_installments_list_page',
+  'Escalation Portal': ESCALATION_PORTAL_ACCESS,
+  'Escalation Requests': ESCALATION_PORTAL_ACCESS,
   'All Calls': 'can_view_all_call_logs',
   'My Calls': 'can_view_mycall_logs',
   'follow_up Tasks': 'can_view_followup_page',

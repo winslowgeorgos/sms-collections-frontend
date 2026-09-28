@@ -27,6 +27,7 @@ import {
   Briefcase, Building2, Network, Workflow,
   Plus, Edit, Trash2, Copy, ToggleLeft, ToggleRight,
   History, PlayCircle, TestTube, Info,
+  ChevronDown, ChevronUp,
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -38,6 +39,15 @@ import {
 import { ActionGuard } from '@/components/auth/action-guard';
 // In app/analytics/admin/page.tsx, add the import:
 import EscalationAnalyticsTab from '@/components/escalations/EscalationAnalyticsTab';
+import {
+  PR_BUCKETS,
+  PR_BUCKET_ORDER,
+  PR_BUCKET_COLOR_CLASSES,
+  getPRBucketMeta,
+  type PRBucketMetrics,
+  type PRBucketTrendMetrics,
+  type PRBucketValue,
+} from '@/types';
 
 
 
@@ -80,6 +90,7 @@ interface OfficerStats {
     collection_rate_vs_monthly_target: number;
     status: 'exceeding' | 'on_track' | 'behind' | 'critical';
     needs_attention: boolean;
+    pr_bucket_metrics: PRBucketMetrics;
     promise_metrics?: {
       promises_created_count: number;
       promises_created_amount: number;
@@ -123,12 +134,14 @@ interface CurrentMonthMetrics {
   days_in_month: number;
   days_passed: number;
   month_progress_percentage: number;
-  assigned_cumulative_balance_uptodate: number;
+  // Raw API value is a numeric string (e.g. "20280664.00") — parse with parseFloat() when displaying.
+  assigned_cumulative_balance_uptodate: string;
   monthly_target: {
     total_outstanding_eod: number;
     daily_cumulative_balance: number;
     description: string;
   };
+  pr_bucket_metrics: PRBucketMetrics;
   current_month_cumulative_balance: number;
   current_month_installments_count: number;
   current_month_overdue_count: number;
@@ -200,6 +213,7 @@ interface CurrentWeekMetrics {
   };
   upcoming_balance: number;
   total_week_balance: number;
+  pr_bucket_metrics: PRBucketMetrics;
   weekly_current_balance: number;
   weekly_installments_count: number;
   weekly_overdue_count: number;
@@ -393,6 +407,7 @@ interface DashboardSummary {
     average_duration: string | null;
   };
   performance_metrics: Record<string, any>;
+  pr_bucket_metrics: PRBucketMetrics;
   recent_activity: Array<{
     type: string;
     loan_id: string;
@@ -503,9 +518,9 @@ interface PaymentPatterns {
 }
 
 interface PerformanceTrends {
-  monthly: Array<{ month: string; collection_rate: number; total_collected: number; target: number; overdue_rate: number }>;
-  quarterly: Array<{ quarter: string; collection_rate: number; total_collected: number; target: number; overdue_rate: number }>;
-  yearly: Array<{ year: string; collection_rate: number; total_collected: number; target: number; overdue_rate: number }>;
+  monthly: Array<{ month: string; collection_rate: number; total_collected: number; target: number; overdue_rate: number; pr_bucket_metrics?: PRBucketTrendMetrics }>;
+  quarterly: Array<{ quarter: string; collection_rate: number; total_collected: number; target: number; overdue_rate: number; pr_bucket_metrics?: PRBucketTrendMetrics }>;
+  yearly: Array<{ year: string; collection_rate: number; total_collected: number; target: number; overdue_rate: number; pr_bucket_metrics?: PRBucketTrendMetrics }>;
 }
 
 interface RiskMetrics {
@@ -617,6 +632,224 @@ const InfoHint = ({ text }: { text: string }) => (
     </div>
   </div>
 );
+
+// ============================================================================
+// PR BUCKET (CBK LOAN-AGING CATEGORIZATION) COMPONENTS
+// ----------------------------------------------------------------------------
+// Shared, reusable presentation for the `pr_bucket_metrics` block returned by
+// the dashboard / current-month / current-week / officer-performance endpoints
+// (PRBucketMetrics — daily & monthly split) and by the performance-trends
+// endpoint (PRBucketTrendMetrics — a single target/posted/commission per period).
+// ============================================================================
+
+/** A single target-vs-posted row rendered inside a bucket mini card (e.g. "Daily" or "Monthly", or a single period row for trend data). */
+interface PRBucketCardRow {
+  label: string;
+  target: number;
+  posted: number;
+}
+
+const PRBucketStat = ({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: string;
+}) => (
+  <div className="rounded-lg border border-gray-100 bg-white px-3 py-2">
+    <p className="text-[11px] uppercase tracking-wide text-gray-400">{label}</p>
+    <p className={`text-sm font-semibold ${accent || 'text-gray-900'}`}>{value}</p>
+  </div>
+);
+
+const PRBucketMiniCard = ({
+  bucket,
+  rows,
+  commission,
+  formatCurrency,
+}: {
+  bucket: PRBucketValue | string;
+  rows: PRBucketCardRow[];
+  commission?: number;
+  formatCurrency: (value: number) => string;
+}) => {
+  const meta = getPRBucketMeta(bucket);
+  const colors = PR_BUCKET_COLOR_CLASSES[meta.color] || PR_BUCKET_COLOR_CLASSES.green;
+
+  return (
+    <div className={`rounded-xl border ${colors.border} ${colors.bg} p-3`}>
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className={`h-2 w-2 rounded-full ${colors.dot}`} />
+        <span className={`text-xs font-semibold ${colors.text}`}>{meta.shortLabel}</span>
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((row) => {
+          const achievement = row.target > 0 ? (row.posted / row.target) * 100 : 0;
+          return (
+            <div key={row.label}>
+              <div className="flex items-center justify-between text-[10px] text-gray-500">
+                <span>{row.label}</span>
+                <span className={achievement >= 100 ? 'text-green-600 font-medium' : ''}>{achievement.toFixed(0)}%</span>
+              </div>
+              <div className="flex items-baseline justify-between text-xs font-semibold text-gray-800">
+                <span>{formatCurrency(row.posted)}</span>
+                <span className="text-[11px] font-normal text-gray-400">/ {formatCurrency(row.target)}</span>
+              </div>
+            </div>
+          );
+        })}
+        {typeof commission === 'number' && commission > 0 && (
+          <div className="mt-1.5 flex items-center justify-between border-t border-white/70 pt-1.5 text-[11px]">
+            <span className="text-gray-500">Commission</span>
+            <span className="font-medium text-gray-700">{formatCurrency(commission)}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/** Compact colored-dot summary of the buckets present in a PRBucketMetrics breakdown, for use inside a table cell. */
+const PRBucketDots = ({ metrics }: { metrics?: PRBucketMetrics | null }) => {
+  const buckets = PR_BUCKET_ORDER.filter((b) => !!metrics?.pr_bucket_breakdown?.[b]);
+  if (buckets.length === 0) {
+    return <span className="text-xs text-gray-300">—</span>;
+  }
+  return (
+    <div className="flex items-center gap-1">
+      {buckets.map((b) => {
+        const meta = getPRBucketMeta(b);
+        const colors = PR_BUCKET_COLOR_CLASSES[meta.color] || PR_BUCKET_COLOR_CLASSES.green;
+        const entry = metrics!.pr_bucket_breakdown[b]!;
+        return (
+          <span
+            key={b}
+            title={`${meta.label}: ${entry.monthly_posted.toLocaleString()} posted / ${entry.monthly_target.toLocaleString()} target`}
+            className={`h-2.5 w-2.5 rounded-full ${colors.dot} ring-2 ring-white`}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
+const PRBucketLegend = () => (
+  <div className="flex flex-wrap items-center gap-3">
+    {PR_BUCKETS.map((b) => {
+      const colors = PR_BUCKET_COLOR_CLASSES[b.color];
+      return (
+        <div key={b.value} className="flex items-center gap-1.5">
+          <span className={`h-2 w-2 rounded-full ${colors.dot}`} />
+          <span className="text-[11px] text-gray-500">{b.shortLabel}</span>
+        </div>
+      );
+    })}
+  </div>
+);
+
+/**
+ * Renders a `PRBucketMetrics`-shaped object (dashboard / current-month / current-week / officer-performance):
+ * a top summary row of daily & monthly percentaged target, posted amount and commission,
+ * plus a grid of per-bucket cards (only buckets present in the breakdown, in PR_BUCKET_ORDER).
+ */
+const PRBucketBreakdownGrid = ({
+  metrics,
+  formatCurrency,
+  title,
+  compact = false,
+}: {
+  metrics: PRBucketMetrics;
+  formatCurrency: (value: number) => string;
+  title?: string;
+  compact?: boolean;
+}) => {
+  const buckets = PR_BUCKET_ORDER.filter((b) => !!metrics.pr_bucket_breakdown?.[b]);
+
+  return (
+    <div className="space-y-3">
+      {title && (
+        <div className="flex items-center">
+          <Layers size={15} className="mr-2 text-gray-400" />
+          <h4 className="text-sm font-semibold text-gray-700">{title}</h4>
+        </div>
+      )}
+
+      <div className={`grid grid-cols-2 ${compact ? 'sm:grid-cols-3' : 'sm:grid-cols-3 lg:grid-cols-6'} gap-2`}>
+        <PRBucketStat label="Daily Target" value={formatCurrency(metrics.daily_percentaged_target)} />
+        <PRBucketStat label="Daily Posted" value={formatCurrency(metrics.daily_posted)} accent="text-green-600" />
+        <PRBucketStat label="Daily Commission" value={formatCurrency(metrics.daily_commission)} accent="text-purple-600" />
+        <PRBucketStat label="Monthly Target" value={formatCurrency(metrics.monthly_percentaged_target)} />
+        <PRBucketStat label="Monthly Posted" value={formatCurrency(metrics.monthly_posted)} accent="text-green-600" />
+        <PRBucketStat label="Monthly Commission" value={formatCurrency(metrics.monthly_commission)} accent="text-purple-600" />
+      </div>
+
+      {buckets.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          {buckets.map((b) => {
+            const entry = metrics.pr_bucket_breakdown[b]!;
+            return (
+              <PRBucketMiniCard
+                key={b}
+                bucket={b}
+                formatCurrency={formatCurrency}
+                commission={(entry.daily_commission || 0) > 0 ? entry.daily_commission : entry.monthly_commission}
+                rows={[
+                  { label: 'Daily', target: entry.daily_target, posted: entry.daily_posted },
+                  { label: 'Monthly', target: entry.monthly_target, posted: entry.monthly_posted },
+                ]}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * Renders a `PRBucketTrendMetrics`-shaped object (performance-trends endpoint):
+ * a single target/posted/commission per period, with only the buckets present in that period shown.
+ */
+const PRBucketTrendBreakdownGrid = ({
+  metrics,
+  formatCurrency,
+}: {
+  metrics: PRBucketTrendMetrics;
+  formatCurrency: (value: number) => string;
+}) => {
+  const buckets = PR_BUCKET_ORDER.filter((b) => !!metrics.pr_bucket_breakdown?.[b]);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <PRBucketStat label="Target" value={formatCurrency(metrics.percentaged_target)} />
+        <PRBucketStat label="Posted" value={formatCurrency(metrics.posted)} accent="text-green-600" />
+        <PRBucketStat label="Commission" value={formatCurrency(metrics.commission)} accent="text-purple-600" />
+      </div>
+
+      {buckets.length > 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          {buckets.map((b) => {
+            const entry = metrics.pr_bucket_breakdown[b]!;
+            return (
+              <PRBucketMiniCard
+                key={b}
+                bucket={b}
+                formatCurrency={formatCurrency}
+                commission={entry.commission}
+                rows={[{ label: 'Period', target: entry.target, posted: entry.posted }]}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400 italic">No bucket-level data recorded for this period.</p>
+      )}
+    </div>
+  );
+};
 
 const OfficerPerformanceFilters = ({ 
   filters, 
@@ -848,7 +1081,22 @@ const OfficerDetailModal = ({
             </div>
           </div>
         </div>
-        
+
+        {/* PR Bucket Breakdown */}
+        {metrics.pr_bucket_metrics && (
+          <div>
+            <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center">
+              <Layers size={14} className="mr-1.5 text-gray-400" />
+              PR Bucket Performance
+            </h4>
+            <PRBucketBreakdownGrid
+              metrics={metrics.pr_bucket_metrics as PRBucketMetrics}
+              formatCurrency={formatCurrency}
+              compact
+            />
+          </div>
+        )}
+
         {/* Snapshot Info */}
         <div className="text-xs text-gray-400 border-t pt-2">
           <p>Daily Snapshot Used: {metrics.snapshots_used?.daily_snapshot_date || 'N/A'}</p>
@@ -891,6 +1139,15 @@ export default function AdminAnalyticsDashboard() {
   const [officerExporting, setOfficerExporting] = useState(false);
   const [selectedOfficerDetail, setSelectedOfficerDetail] = useState<OfficerDetailModalData | null>(null);
   const [isOfficerDetailModalOpen, setIsOfficerDetailModalOpen] = useState(false);
+  // Row-level expansion for the PR Bucket breakdown in the Officer Performance table
+  const [expandedOfficerRows, setExpandedOfficerRows] = useState<Record<number, boolean>>({});
+  const toggleOfficerRowExpanded = (officerId: number) => {
+    setExpandedOfficerRows((prev) => ({ ...prev, [officerId]: !prev[officerId] }));
+  };
+
+  // PR Bucket Performance Trends state (Performance Trends tab)
+  const [trendGranularity, setTrendGranularity] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
+  const [expandedTrendPeriods, setExpandedTrendPeriods] = useState<Record<string, boolean>>({});
   
   // Schedule Management State
   const [schedules, setSchedules] = useState<ScheduleConfig[]>([]);
@@ -1032,6 +1289,10 @@ export default function AdminAnalyticsDashboard() {
       case 'high': return 'bg-red-100 text-red-800';
       default: return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const toggleTrendPeriod = (key: string) => {
+    setExpandedTrendPeriods((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   // ============================================================================
@@ -1687,10 +1948,10 @@ export default function AdminAnalyticsDashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Collections Dashboard</h1>
-          <p className="text-gray-600 mt-2">Comprehensive analytics and insights for collections performance</p>
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">Collections Dashboard</h1>
+          <p className="mt-1 text-sm text-gray-500 sm:mt-2 sm:text-base">Comprehensive analytics and insights for collections performance</p>
         </div>
 
         <div className="flex space-x-3">
@@ -1778,34 +2039,34 @@ export default function AdminAnalyticsDashboard() {
 
       {/* Tabs Navigation */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid grid-cols-2 lg:grid-cols-6 gap-2">
-          <TabsTrigger value="overview" className="flex items-center space-x-2">
+        <TabsList className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100/70 p-1.5 lg:grid-cols-6">
+          <TabsTrigger value="overview" className="flex items-center justify-center space-x-2">
             <LayoutDashboard size={16} />
             <span>Overview</span>
           </TabsTrigger>
-          <TabsTrigger value="escalation" className="flex items-center space-x-2">
+          <TabsTrigger value="escalation" className="flex items-center justify-center space-x-2">
             <Shield size={16} />
             <span>Escalation</span>
           </TabsTrigger>
           {canAccessSchedules && (
-            <TabsTrigger value="schedules" className="flex items-center space-x-2">
+            <TabsTrigger value="schedules" className="flex items-center justify-center space-x-2">
               <Calendar size={16} />
               <span>Schedules</span>
             </TabsTrigger>
           )}
-          <TabsTrigger value="performance" className="flex items-center space-x-2">
+          <TabsTrigger value="performance" className="flex items-center justify-center space-x-2">
             <TrendingUp size={16} />
-            <span>Performance</span>
+            <span>Performance Trends</span>
           </TabsTrigger>
-          <TabsTrigger value="risk" className="flex items-center space-x-2">
+          <TabsTrigger value="risk" className="flex items-center justify-center space-x-2">
             <Shield size={16} />
             <span>Risk Analytics</span>
           </TabsTrigger>
-          <TabsTrigger value="efficiency" className="flex items-center space-x-2">
+          <TabsTrigger value="efficiency" className="flex items-center justify-center space-x-2">
             <Gauge size={16} />
             <span>Efficiency</span>
           </TabsTrigger>
-          <TabsTrigger value="insights" className="flex items-center space-x-2">
+          <TabsTrigger value="insights" className="flex items-center justify-center space-x-2">
             <Sparkles size={16} />
             <span>Insights & Forecast</span>
           </TabsTrigger>
@@ -2201,7 +2462,7 @@ export default function AdminAnalyticsDashboard() {
                   <div>
                     <p className="text-sm text-gray-600">Assigned Balance</p>
                     <p className="text-2xl font-bold">
-                      {formatCurrency(currentMonthMetrics?.assigned_cumulative_balance_uptodate || 0)}
+                      {formatCurrency(parseFloat(currentMonthMetrics?.assigned_cumulative_balance_uptodate || '0'))}
                     </p>
                     <p className="text-xs text-gray-500">Static from today's snapshot</p>
                   </div>
@@ -2229,6 +2490,29 @@ export default function AdminAnalyticsDashboard() {
               </CardContent>
             </Card>
           </div>
+
+          {/* PR Bucket Performance (CBK Loan-Aging Categorization) */}
+          {dashboardData?.pr_bucket_metrics && (
+            <Card className="rounded-xl border border-gray-100 shadow-sm">
+              <CardHeader>
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="flex items-center text-lg font-semibold text-gray-900">
+                      <Layers className="mr-2 h-5 w-5 text-indigo-600" />
+                      PR Bucket Performance
+                    </h2>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Today's CBK loan-aging categorization snapshot — targets, posted amounts and commission by bucket.
+                    </p>
+                  </div>
+                  <PRBucketLegend />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <PRBucketBreakdownGrid metrics={dashboardData.pr_bucket_metrics} formatCurrency={formatCurrency} />
+              </CardContent>
+            </Card>
+          )}
 
           {/* Month & Week Performance */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2351,6 +2635,17 @@ export default function AdminAnalyticsDashboard() {
                         </span>
                       </div>
                     </div>
+
+                    {currentMonthMetrics.pr_bucket_metrics && (
+                      <div className="border-t border-gray-100 pt-3">
+                        <PRBucketBreakdownGrid
+                          metrics={currentMonthMetrics.pr_bucket_metrics}
+                          formatCurrency={formatCurrency}
+                          title="PR Bucket Breakdown (Month)"
+                          compact
+                        />
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -2470,6 +2765,17 @@ export default function AdminAnalyticsDashboard() {
                       <span className="mx-2 text-gray-300">|</span>
                       <span className="text-gray-500">Collected MTD: {formatCurrency(currentWeekMetrics.month_context.collected_mtd)}</span>
                     </div>
+
+                    {currentWeekMetrics.pr_bucket_metrics && (
+                      <div className="border-t border-gray-100 pt-3">
+                        <PRBucketBreakdownGrid
+                          metrics={currentWeekMetrics.pr_bucket_metrics}
+                          formatCurrency={formatCurrency}
+                          title="PR Bucket Breakdown (Week)"
+                          compact
+                        />
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -2534,7 +2840,7 @@ export default function AdminAnalyticsDashboard() {
             ) : filteredOfficerData && filteredOfficerData.length > 0 ? (
               <>
                 {/* Summary Stats Row */}
-                <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-5 xl:grid-cols-10 gap-3">
                   <div className="bg-gray-50 p-3 rounded-lg text-center">
                     <p className="text-xs text-gray-500">Total Officers</p>
                     <p className="text-xl font-bold">{filteredOfficerData.length}</p>
@@ -2543,6 +2849,27 @@ export default function AdminAnalyticsDashboard() {
                     <p className="text-xs text-gray-500">Total Collected</p>
                     <p className="text-xl font-bold text-green-600">
                       {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.collected_mtd || 0), 0))}
+                    </p>
+                  </div>
+                  <div className="bg-blue-50 p-3 rounded-lg text-center">
+                    <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
+                      PR % Target (Mo.)
+                      <InfoHint text="Sum of each officer's monthly percentaged target across all PR buckets" />
+                    </p>
+                    <p className="text-xl font-bold text-blue-700">
+                      {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_percentaged_target || 0), 0))}
+                    </p>
+                  </div>
+                  <div className="bg-green-50 p-3 rounded-lg text-center">
+                    <p className="text-xs text-gray-500">PR Posted (Mo.)</p>
+                    <p className="text-xl font-bold text-green-700">
+                      {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_posted || 0), 0))}
+                    </p>
+                  </div>
+                  <div className="bg-purple-50 p-3 rounded-lg text-center">
+                    <p className="text-xs text-gray-500">PR Commission (Mo.)</p>
+                    <p className="text-xl font-bold text-purple-700">
+                      {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_commission || 0), 0))}
                     </p>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-lg text-center">
@@ -2595,6 +2922,20 @@ export default function AdminAnalyticsDashboard() {
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Collected MTD</th>
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Monthly Rate</th>
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Monthly Balance</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">
+                              <span className="inline-flex items-center gap-1">
+                                PR % Target
+                                <InfoHint text="Monthly percentaged target from CBK PR bucket configuration (target % × cumulative balance, by bucket)" />
+                              </span>
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">PR Posted</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">PR Commission</th>
+                            <th className="text-center py-3 px-4 text-sm font-semibold text-gray-700">
+                              <span className="inline-flex items-center gap-1">
+                                PR Buckets
+                                <InfoHint text="Current / 1-30 / 31-60 / 61-90 / 90+ day buckets with activity this month. Click to expand full breakdown." />
+                              </span>
+                            </th>
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Promises Count</th>
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Promises Amount</th>
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Fulfilled</th>
@@ -2605,7 +2946,8 @@ export default function AdminAnalyticsDashboard() {
                         </thead>
                         <tbody>
                           {filteredOfficerData.map((officer) => (
-                            <tr key={officer.officer.id} className="border-b border-gray-100 hover:bg-gray-50">
+                            <React.Fragment key={officer.officer.id}>
+                            <tr className="border-b border-gray-100 hover:bg-gray-50">
                               <td className="py-3 px-4">
                                 <div className="flex items-center">
                                   <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
@@ -2638,6 +2980,29 @@ export default function AdminAnalyticsDashboard() {
                               </td>
                               <td className="text-right py-3 px-4 text-orange-600">
                                 {formatCurrency(officer.metrics.monthly_current_balance)}
+                              </td>
+                              <td className="text-right py-3 px-4 font-medium">
+                                {formatCurrency(officer.metrics.pr_bucket_metrics?.monthly_percentaged_target || 0)}
+                              </td>
+                              <td className="text-right py-3 px-4 text-green-600 font-medium">
+                                {formatCurrency(officer.metrics.pr_bucket_metrics?.monthly_posted || 0)}
+                              </td>
+                              <td className="text-right py-3 px-4 text-purple-600 font-medium">
+                                {formatCurrency(officer.metrics.pr_bucket_metrics?.monthly_commission || 0)}
+                              </td>
+                              <td className="text-center py-3 px-4">
+                                <button
+                                  onClick={() => toggleOfficerRowExpanded(officer.officer.id)}
+                                  className="inline-flex items-center gap-1.5 hover:bg-gray-100 rounded px-1.5 py-1"
+                                  title="Show PR bucket breakdown"
+                                >
+                                  <PRBucketDots metrics={officer.metrics.pr_bucket_metrics} />
+                                  {expandedOfficerRows[officer.officer.id] ? (
+                                    <ChevronUp size={14} className="text-gray-400" />
+                                  ) : (
+                                    <ChevronDown size={14} className="text-gray-400" />
+                                  )}
+                                </button>
                               </td>
                               <td className="text-right py-3 px-4">
                                 <span className="font-medium">
@@ -2697,6 +3062,19 @@ export default function AdminAnalyticsDashboard() {
                                 </div>
                               </td>
                             </tr>
+                            {expandedOfficerRows[officer.officer.id] && officer.metrics.pr_bucket_metrics && (
+                              <tr className="border-b border-gray-100 bg-gray-50/60">
+                                <td colSpan={15} className="px-4 py-4">
+                                  <PRBucketBreakdownGrid
+                                    metrics={officer.metrics.pr_bucket_metrics}
+                                    formatCurrency={formatCurrency}
+                                    title={`${officer.officer.full_name || officer.officer.username} — PR Bucket Breakdown`}
+                                    compact
+                                  />
+                                </td>
+                              </tr>
+                            )}
+                            </React.Fragment>
                           ))}
                         </tbody>
                       </table>
@@ -2889,6 +3267,108 @@ export default function AdminAnalyticsDashboard() {
                   <p className="text-sm text-red-600">{formatCurrency(paymentPatterns?.early_vs_late?.late_payments?.amount || 0)}</p>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* PR Bucket Performance Trends */}
+          <Card className="rounded-xl border border-gray-100 shadow-sm">
+            <CardHeader>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="flex items-center text-lg font-semibold text-gray-900">
+                    <Layers className="mr-2 h-5 w-5 text-indigo-600" />
+                    PR Bucket Performance Trends
+                  </h2>
+                  <p className="mt-1 text-xs text-gray-500">
+                    CBK loan-aging categorization by period. Click a row to expand its bucket-level breakdown.
+                  </p>
+                </div>
+                <div className="flex gap-1 rounded-lg bg-gray-100 p-1 self-start">
+                  {(['monthly', 'quarterly', 'yearly'] as const).map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => setTrendGranularity(g)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                        trendGranularity === g ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {(() => {
+                const rows = performanceTrends?.[trendGranularity] || [];
+                if (rows.length === 0) {
+                  return (
+                    <div className="py-10 text-center text-sm text-gray-400">
+                      No {trendGranularity} trend data available.
+                    </div>
+                  );
+                }
+                const periodField = trendGranularity === 'monthly' ? 'month' : trendGranularity === 'quarterly' ? 'quarter' : 'year';
+                return (
+                  <div className="divide-y divide-gray-100">
+                    {rows.map((row: any) => {
+                      const periodLabel = row[periodField] as string;
+                      const key = `${trendGranularity}-${periodLabel}`;
+                      const isExpanded = !!expandedTrendPeriods[key];
+                      const bucketMetrics: PRBucketTrendMetrics | undefined = row.pr_bucket_metrics;
+                      const hasBucketData = !!bucketMetrics && (
+                        Object.keys(bucketMetrics.pr_bucket_breakdown || {}).length > 0 ||
+                        bucketMetrics.percentaged_target > 0 ||
+                        bucketMetrics.posted > 0
+                      );
+                      return (
+                        <div key={key}>
+                          <button
+                            type="button"
+                            onClick={() => hasBucketData && toggleTrendPeriod(key)}
+                            className={`flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left transition-colors ${
+                              hasBucketData ? 'cursor-pointer hover:bg-gray-50' : 'cursor-default'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              {hasBucketData ? (
+                                isExpanded ? (
+                                  <ChevronUp size={16} className="text-gray-400 flex-shrink-0" />
+                                ) : (
+                                  <ChevronDown size={16} className="text-gray-400 flex-shrink-0" />
+                                )
+                              ) : (
+                                <span className="inline-block w-4" />
+                              )}
+                              <span className="text-sm font-medium text-gray-900">{periodLabel}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-sm">
+                              <span className="text-gray-500">
+                                Collected <span className="font-medium text-gray-800">{formatCurrency(row.total_collected)}</span>
+                              </span>
+                              <span className="text-gray-500">
+                                Target <span className="font-medium text-gray-800">{formatCurrency(row.target)}</span>
+                              </span>
+                              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                row.collection_rate >= 70 ? 'bg-green-100 text-green-800' :
+                                row.collection_rate >= 40 ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-red-100 text-red-800'
+                              }`}>
+                                {formatPercent(row.collection_rate)}
+                              </span>
+                            </div>
+                          </button>
+                          {isExpanded && bucketMetrics && (
+                            <div className="bg-gray-50/60 px-4 pb-4 pt-1">
+                              <PRBucketTrendBreakdownGrid metrics={bucketMetrics} formatCurrency={formatCurrency} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>

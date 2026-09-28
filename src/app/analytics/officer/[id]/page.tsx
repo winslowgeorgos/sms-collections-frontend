@@ -11,7 +11,11 @@ import {
   AlertCircle, CheckCircle, XCircle, BarChart3,
   RefreshCw, Download, Eye, Phone, Mail, HelpCircle,
   List,
-  ExternalLink
+  ExternalLink,
+  Layers,
+  Percent,
+  Users,
+  Gauge,
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -37,12 +41,20 @@ import {
   ZAxis,
   Cell
 } from 'recharts';
+import {
+  PR_BUCKET_ORDER,
+  PR_BUCKET_COLOR_CLASSES,
+  getPRBucketMeta,
+  type PRBucketMetrics,
+  type PRBucketBreakdownEntry,
+  type PRBucketValue,
+} from '@/types';
 
 // ============================================================
-// TYPES - UPDATED TO MATCH PROVIDED RESPONSES
+// TYPES - MATCH ACTUAL BACKEND RESPONSES
 // ============================================================
 
-// Week Metrics Type (from /loan-processor/metrics/officer/12/week/)
+// Week Metrics Type (from /loan-processor/metrics/officer/{id}/week/)
 interface OfficerWeekMetrics {
   officer_id: number;
   date: string;
@@ -60,6 +72,8 @@ interface OfficerWeekMetrics {
     description: string;
     source: string;
   };
+  // NEW: CBK "PR bucket" categorization (target/posted/commission per aging bucket)
+  pr_bucket_metrics: PRBucketMetrics;
   daily_snapshots: Record<string, {
     target: number;
     cumulative_balance: number;
@@ -129,7 +143,7 @@ interface OfficerWeekMetrics {
   };
 }
 
-// Month Metrics Type (from /loan-processor/metrics/officer/12/month/)
+// Month Metrics Type (from /loan-processor/metrics/officer/{id}/month/)
 interface OfficerMonthMetrics {
   officer_id: number;
   date: string;
@@ -149,6 +163,8 @@ interface OfficerMonthMetrics {
     paid_off_target: number;
     remaining_to_pay: number;
   };
+  // NEW: CBK "PR bucket" categorization (target/posted/commission per aging bucket)
+  pr_bucket_metrics: PRBucketMetrics;
   progress: {
     collected_month_to_date: number;
     remaining_balance: number;
@@ -266,27 +282,86 @@ interface OfficerDailyHistory {
   count: number;
 }
 
+// Monthly History Type (from /loan-processor/officers/{id}/monthly-history/?year=&month=)
+// NOTE: this previously did not match the real endpoint response at all (it had
+// `year`/`month`/`avg_cumulative_balance`, none of which the API returns). Fixed to
+// mirror the actual payload, including the new PR-bucket / percentaged-target fields.
+interface OfficerMonthlyHistoryEntry {
+  year_annot: number;
+  month_annot: number;
+  month_start_date: string;
+  month_end_date: string;
+  total_collected_month: number;
+  total_collected_mtd_end: number;
+  avg_daily_cumulative_balance: number;
+  avg_collection_rate: number;
+  total_resolved_month: number;
+  start_cumulative_balance: number;
+  end_cumulative_balance: number;
+  peak_cumulative_balance: number;
+  avg_daily_target: number;
+  avg_daily_target_achievement: number;
+  total_calls: number;
+  total_promises: number;
+  total_repayments: number;
+  avg_assigned_installments: number;
+  avg_assigned_cumulative_balance: number;
+  // NEW: CBK percentaged-target / posted / commission totals for the month
+  monthly_percentaged_target: number;
+  monthly_posted: number;
+  monthly_commission: number;
+  avg_daily_percentaged_target: number;
+  total_daily_posted: number;
+  total_daily_commission: number;
+  cumulative_balance_change: number;
+  cumulative_balance_change_percentage: number;
+  // NEW: per-bucket breakdown for the month
+  pr_bucket_breakdown: Partial<Record<PRBucketValue, PRBucketBreakdownEntry>>;
+}
+
 interface OfficerMonthlyHistory {
-  data: Array<{
-    year: number;
-    month: number;
-    month_start_date: string;
-    month_end_date: string;
-    total_collected_month: number;
-    avg_cumulative_balance: number;
-    avg_collection_rate: number;
-    total_resolved_month: number;
-    start_cumulative_balance: number;
-    end_cumulative_balance: number;
-    avg_assigned_installments: number;
-    avg_assigned_cumulative_balance: number;
-    peak_cumulative_balance: number;
-  }>;
+  data: OfficerMonthlyHistoryEntry[];
   count: number;
 }
 
 // ============================================================
-// HELPER COMPONENT: Metric Hint Tooltip
+// FORMATTERS & SHARED HELPERS
+// ============================================================
+
+const formatCurrency = (value: number | null | undefined) => {
+  return `KSh ${(value ?? 0).toLocaleString()}`;
+};
+
+const formatDate = (dateString: string) => {
+  if (!dateString) return 'N/A';
+  return new Date(dateString).toLocaleDateString();
+};
+
+const getRiskColor = (riskLevel: string) => {
+  switch (riskLevel?.toLowerCase()) {
+    case 'low': return 'text-green-600 bg-green-100';
+    case 'medium': return 'text-yellow-600 bg-yellow-100';
+    case 'high': return 'text-red-600 bg-red-100';
+    default: return 'text-gray-600 bg-gray-100';
+  }
+};
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'ahead':
+    case 'exceeding':
+      return 'text-green-600 bg-green-100';
+    case 'behind':
+      return 'text-red-600 bg-red-100';
+    case 'on_track':
+      return 'text-blue-600 bg-blue-100';
+    default:
+      return 'text-gray-600 bg-gray-100';
+  }
+};
+
+// ============================================================
+// SHARED UI COMPONENTS
 // ============================================================
 
 const MetricHint = ({ text }: { text: string }) => {
@@ -301,11 +376,198 @@ const MetricHint = ({ text }: { text: string }) => {
         <HelpCircle size={14} className="text-gray-400 hover:text-gray-600" />
       </button>
       {show && (
-        <div className="absolute z-10 w-48 p-2 mt-1 text-xs text-white bg-gray-800 rounded shadow-lg -left-24 top-4">
+        <div className="absolute z-10 w-48 p-2 mt-1 text-xs text-white bg-gray-800 rounded-lg shadow-lg -left-24 top-4">
           {text}
           <div className="absolute w-2 h-2 bg-gray-800 transform rotate-45 -top-1 left-1/2 -ml-1"></div>
         </div>
       )}
+    </div>
+  );
+};
+
+// Consistent section heading used across every card in the page
+const SectionTitle = ({
+  icon: Icon,
+  children,
+  hint,
+}: {
+  icon?: React.ComponentType<any>;
+  children: React.ReactNode;
+  hint?: string;
+}) => (
+  <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+    {Icon && <Icon size={18} className="text-gray-400" />}
+    <span className="flex items-center">
+      {children}
+      {hint && <MetricHint text={hint} />}
+    </span>
+  </h2>
+);
+
+// Consistent overview "stat" card used for the top KPI rows
+const StatCard = ({
+  icon: Icon,
+  iconBg,
+  iconColor,
+  label,
+  value,
+  hint,
+  valueClassName,
+}: {
+  icon: React.ComponentType<any>;
+  iconBg: string;
+  iconColor: string;
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+  valueClassName?: string;
+}) => (
+  <Card className="rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+    <CardContent className="pt-6">
+      <div className="flex items-center">
+        <div className={`rounded-full ${iconBg} p-3 mr-4 shrink-0`}>
+          <Icon className={`h-6 w-6 ${iconColor}`} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm text-gray-600 flex items-center whitespace-nowrap">
+            {label}
+            {hint && <MetricHint text={hint} />}
+          </p>
+          <p className={`text-2xl font-bold truncate ${valueClassName ?? 'text-gray-900'}`}>{value}</p>
+        </div>
+      </div>
+    </CardContent>
+  </Card>
+);
+
+// Small labeled stat used inside the PR-bucket overview row and history rows
+const MiniStat = ({
+  label,
+  value,
+  tone = 'gray',
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: 'gray' | 'green' | 'blue' | 'amber';
+}) => {
+  const toneClasses: Record<string, string> = {
+    gray: 'bg-gray-50 border-gray-200 text-gray-900',
+    green: 'bg-green-50 border-green-200 text-green-700',
+    blue: 'bg-blue-50 border-blue-200 text-blue-700',
+    amber: 'bg-amber-50 border-amber-200 text-amber-700',
+  };
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${toneClasses[tone]}`}>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="text-sm font-semibold mt-0.5">{value}</p>
+    </div>
+  );
+};
+
+// ============================================================
+// PR BUCKET BREAKDOWN GRID
+// Renders a PRBucketMetrics-shaped object (overall totals + per-bucket
+// breakdown) as an overview row of stats plus one card per bucket present.
+// Reused across the Month View, Week View, and each row of the History's
+// Monthly Performance Summary.
+// ============================================================
+
+interface PRBucketOverallTotals {
+  daily_target: number;
+  monthly_target: number;
+  daily_posted: number;
+  monthly_posted: number;
+  daily_commission: number;
+  monthly_commission: number;
+}
+
+const PRBucketBreakdownGrid = ({
+  breakdown,
+  overall,
+  title = 'PR Bucket Breakdown',
+  hint,
+  compact = false,
+}: {
+  breakdown: Partial<Record<PRBucketValue, PRBucketBreakdownEntry>> | null | undefined;
+  overall?: PRBucketOverallTotals;
+  title?: string;
+  hint?: string;
+  compact?: boolean;
+}) => {
+  const buckets = PR_BUCKET_ORDER.filter((b) => !!breakdown?.[b]);
+
+  if (!breakdown || buckets.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={compact ? 'space-y-2' : 'space-y-4'}>
+      {!compact && (
+        <SectionTitle icon={Layers} hint={hint}>
+          {title}
+        </SectionTitle>
+      )}
+
+      {overall && (
+        <div className={`grid gap-2 ${compact ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-3 gap-3'}`}>
+          {!compact && <MiniStat label="Daily % Target" value={formatCurrency(overall.daily_target)} />}
+          <MiniStat label={compact ? '% Target' : 'Monthly % Target'} value={formatCurrency(overall.monthly_target)} />
+          {!compact && <MiniStat label="Daily Posted" value={formatCurrency(overall.daily_posted)} tone="green" />}
+          <MiniStat label={compact ? 'Posted' : 'Monthly Posted'} value={formatCurrency(overall.monthly_posted)} tone="green" />
+          {!compact && <MiniStat label="Daily Commission" value={formatCurrency(overall.daily_commission)} tone="blue" />}
+          <MiniStat label={compact ? 'Commission' : 'Monthly Commission'} value={formatCurrency(overall.monthly_commission)} tone="blue" />
+        </div>
+      )}
+
+      <div className={`grid gap-3 ${compact ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-5'}`}>
+        {buckets.map((bucketValue) => {
+          const entry = breakdown[bucketValue] as PRBucketBreakdownEntry;
+          const meta = getPRBucketMeta(bucketValue);
+          const colors = PR_BUCKET_COLOR_CLASSES[meta.color] ?? PR_BUCKET_COLOR_CLASSES.green;
+          const hasCommission = entry.daily_commission > 0 || entry.monthly_commission > 0;
+
+          return (
+            <div key={bucketValue} className={`rounded-lg border ${colors.border} ${colors.bg} p-3`}>
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className={`h-2 w-2 rounded-full ${colors.dot} shrink-0`} />
+                <span className={`text-xs font-semibold ${colors.text} truncate`}>
+                  {compact ? meta.shortLabel : meta.label}
+                </span>
+              </div>
+              <dl className="space-y-1 text-[11px]">
+                {!compact && (
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Daily Target</dt>
+                    <dd className="font-medium text-gray-800">{formatCurrency(entry.daily_target)}</dd>
+                  </div>
+                )}
+                {!compact && (
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Daily Posted</dt>
+                    <dd className="font-medium text-gray-800">{formatCurrency(entry.daily_posted)}</dd>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <dt className="text-gray-500">{compact ? 'Target' : 'Monthly Target'}</dt>
+                  <dd className="font-medium text-gray-800">{formatCurrency(entry.monthly_target)}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-gray-500">{compact ? 'Posted' : 'Monthly Posted'}</dt>
+                  <dd className="font-medium text-gray-800">{formatCurrency(entry.monthly_posted)}</dd>
+                </div>
+                {hasCommission && (
+                  <div className="flex justify-between pt-1 border-t border-gray-900/10">
+                    <dt className="text-gray-500">Commission</dt>
+                    <dd className="font-medium text-gray-800">
+                      {formatCurrency(compact ? entry.monthly_commission : entry.daily_commission)}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -398,38 +660,6 @@ export default function OfficerAnalyticsPage() {
     }
   };
 
-  const formatCurrency = (value: number) => {
-    return `KSh ${value?.toLocaleString() ?? 0}`;
-  };
-
-  const formatDate = (dateString: string) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString();
-  };
-
-  const getRiskColor = (riskLevel: string) => {
-    switch (riskLevel?.toLowerCase()) {
-      case 'low': return 'text-green-600 bg-green-100';
-      case 'medium': return 'text-yellow-600 bg-yellow-100';
-      case 'high': return 'text-red-600 bg-red-100';
-      default: return 'text-gray-600 bg-gray-100';
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'ahead':
-      case 'exceeding':
-        return 'text-green-600 bg-green-100';
-      case 'behind':
-        return 'text-red-600 bg-red-100';
-      case 'on_track':
-        return 'text-blue-600 bg-blue-100';
-      default:
-        return 'text-gray-600 bg-gray-100';
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -441,197 +671,147 @@ export default function OfficerAnalyticsPage() {
   return (
     <div className="space-y-6 p-6 bg-gray-50 min-h-screen">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Officer Performance Analytics</h1>
-            <p className="text-gray-600">Officer ID: {officerId} | As of {new Date().toLocaleDateString()}</p>
-          </div>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Officer Performance Analytics</h1>
+          <p className="text-gray-600">Officer ID: {officerId} &middot; As of {new Date().toLocaleDateString()}</p>
         </div>
-         <div className="flex space-x-2">
-                  {/* NEW: Escalation Portal Button */}
-                  <Button 
-                    variant="outline" 
-                    onClick={() => window.location.href = '/escalation_portal'}
-                    className="border-blue-300 text-blue-700 hover:bg-blue-50"
-                  >
-                    <ExternalLink size={16} className="mr-2" />
-                    Escalation Portal
-                  </Button>
-                  
-                  {/* NEW: Escalation Lists Button */}
-                  <Button 
-                    variant="outline" 
-                    onClick={() => window.location.href = '/escalation_portal/list'}
-                    className="border-purple-300 text-purple-700 hover:bg-purple-50"
-                  >
-                    <List size={16} className="mr-2" />
-                    Escalation Lists
-                  </Button>
-                </div>
-        <Button variant="outline" onClick={fetchAllData}>
-          <RefreshCw size={20} className="mr-2" />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => window.location.href = '/escalation_portal'}
+            className="border-blue-300 text-blue-700 hover:bg-blue-50"
+          >
+            <ExternalLink size={16} className="mr-2" />
+            Escalation Portal
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => window.location.href = '/escalation_portal/list'}
+            className="border-purple-300 text-purple-700 hover:bg-purple-50"
+          >
+            <List size={16} className="mr-2" />
+            Escalation Lists
+          </Button>
+
+          <Button variant="outline" onClick={fetchAllData}>
+            <RefreshCw size={16} className="mr-2" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* View Selector */}
-      <div className="flex space-x-2 border-b border-gray-200">
-        <button
-          onClick={() => setSelectedView('month')}
-          className={`py-2 px-4 font-medium text-sm border-b-2 transition-colors ${
-            selectedView === 'month'
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Month View
-        </button>
-        <button
-          onClick={() => setSelectedView('week')}
-          className={`py-2 px-4 font-medium text-sm border-b-2 transition-colors ${
-            selectedView === 'week'
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Week View
-        </button>
-        <button
-          onClick={() => setSelectedView('history')}
-          className={`py-2 px-4 font-medium text-sm border-b-2 transition-colors ${
-            selectedView === 'history'
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          History
-        </button>
+      <div className="inline-flex items-center gap-1 rounded-lg bg-gray-200/60 p-1">
+        {([
+          { key: 'month', label: 'Month View' },
+          { key: 'week', label: 'Week View' },
+          { key: 'history', label: 'History' },
+        ] as const).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setSelectedView(tab.key)}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              selectedView === tab.key
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* MONTH VIEW - UPDATED */}
+      {/* MONTH VIEW */}
       {selectedView === 'month' && monthMetrics && (
         <div className="space-y-6">
           {/* Month Overview Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className="rounded-full bg-blue-100 p-3 mr-4">
-                      <Target className="h-6 w-6 text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 flex items-center">
-                        Monthly Target
-                        <MetricHint text="Total cumulative balance target for the current month from all assigned installments" />
-                      </p>
-                      <p className="text-2xl font-bold">
-                        {formatCurrency(monthMetrics.monthly_target.current_month_target)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className="rounded-full bg-green-100 p-3 mr-4">
-                      <DollarSign className="h-6 w-6 text-green-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 flex items-center">
-                        Collected MTD
-                        <MetricHint text="Total amount collected from the start of the month until today" />
-                      </p>
-                      <p className="text-2xl font-bold text-green-600">
-                        {formatCurrency(monthMetrics.progress.collected_month_to_date)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-              <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className="rounded-full bg-orange-100 p-3 mr-4">
-                      <Target className="h-6 w-6 text-orange-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 flex items-center">
-                        Pending Collections
-                        <MetricHint text="Total cumulative balance target for the current month from all assigned installments" />
-                      </p>
-                      <p className="text-2xl font-bold text-orange-600">
-                        {formatCurrency(monthMetrics.monthly_target.total_current_balance)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className="rounded-full bg-purple-100 p-3 mr-4">
-                      <Activity className="h-6 w-6 text-purple-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 flex items-center">
-                        Collection Rate
-                        <MetricHint text="Percentage of monthly target collected so far (Collected / Monthly Target)" />
-                      </p>
-                      <p className="text-2xl font-bold">{monthMetrics.progress.collection_rate?.toFixed(1)}%</p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className={`rounded-full p-3 mr-4 ${
-                      monthMetrics.performance_analysis.risk_level === 'low' ? 'bg-green-100' :
-                      monthMetrics.performance_analysis.risk_level === 'medium' ? 'bg-yellow-100' :
-                      'bg-red-100'
-                    }`}>
-                      <AlertCircle className={`h-6 w-6 ${
-                        monthMetrics.performance_analysis.risk_level === 'low' ? 'text-green-600' :
-                        monthMetrics.performance_analysis.risk_level === 'medium' ? 'text-yellow-600' :
-                        'text-red-600'
-                      }`} />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 flex items-center">
-                        Risk Level
-                        <MetricHint text="Overall risk assessment based on overdue percentage, collection pace, and recovery possibility" />
-                      </p>
-                      <p className="text-2xl font-bold capitalize">{monthMetrics.performance_analysis.risk_level}</p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <StatCard
+              icon={Target}
+              iconBg="bg-blue-100"
+              iconColor="text-blue-600"
+              label="Monthly Target"
+              hint="Total cumulative balance target for the current month from all assigned installments"
+              value={formatCurrency(monthMetrics.monthly_target.current_month_target)}
+            />
+            <StatCard
+              icon={DollarSign}
+              iconBg="bg-green-100"
+              iconColor="text-green-600"
+              label="Collected MTD"
+              hint="Total amount collected from the start of the month until today"
+              value={formatCurrency(monthMetrics.progress.collected_month_to_date)}
+              valueClassName="text-green-600"
+            />
+            <StatCard
+              icon={Target}
+              iconBg="bg-orange-100"
+              iconColor="text-orange-600"
+              label="Pending Collections"
+              hint="Total current outstanding balance still to be collected"
+              value={formatCurrency(monthMetrics.monthly_target.total_current_balance)}
+              valueClassName="text-orange-600"
+            />
+            <StatCard
+              icon={Activity}
+              iconBg="bg-purple-100"
+              iconColor="text-purple-600"
+              label="Collection Rate"
+              hint="Percentage of monthly target collected so far (Collected / Monthly Target)"
+              value={`${monthMetrics.progress.collection_rate?.toFixed(1)}%`}
+            />
+            <StatCard
+              icon={AlertCircle}
+              iconBg={
+                monthMetrics.performance_analysis.risk_level === 'low' ? 'bg-green-100' :
+                monthMetrics.performance_analysis.risk_level === 'medium' ? 'bg-yellow-100' :
+                'bg-red-100'
+              }
+              iconColor={
+                monthMetrics.performance_analysis.risk_level === 'low' ? 'text-green-600' :
+                monthMetrics.performance_analysis.risk_level === 'medium' ? 'text-yellow-600' :
+                'text-red-600'
+              }
+              label="Risk Level"
+              hint="Overall risk assessment based on overdue percentage, collection pace, and recovery possibility"
+              value={<span className="capitalize">{monthMetrics.performance_analysis.risk_level}</span>}
+            />
           </div>
+
+          {/* PR Bucket Breakdown (NEW) */}
+          <Card className="rounded-xl border border-gray-200 shadow-sm">
+            <CardHeader>
+              <SectionTitle
+                icon={Layers}
+                hint="CBK loan-aging categorization: percentaged target, amounts posted, and commission earned, broken down by PR bucket"
+              >
+                PR Bucket Breakdown
+              </SectionTitle>
+            </CardHeader>
+            <CardContent>
+              <PRBucketBreakdownGrid
+                breakdown={monthMetrics.pr_bucket_metrics?.pr_bucket_breakdown}
+                overall={{
+                  daily_target: monthMetrics.pr_bucket_metrics?.daily_percentaged_target,
+                  monthly_target: monthMetrics.pr_bucket_metrics?.monthly_percentaged_target,
+                  daily_posted: monthMetrics.pr_bucket_metrics?.daily_posted,
+                  monthly_posted: monthMetrics.pr_bucket_metrics?.monthly_posted,
+                  daily_commission: monthMetrics.pr_bucket_metrics?.daily_commission,
+                  monthly_commission: monthMetrics.pr_bucket_metrics?.monthly_commission,
+                }}
+              />
+            </CardContent>
+          </Card>
 
           {/* Progress Section */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={Gauge} hint="How far into the month we are (days passed) vs collection progress">
                   Month Progress
-                  <MetricHint text="How far into the month we are (days passed) vs collection progress" />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -653,21 +833,20 @@ export default function OfficerAnalyticsPage() {
                       <div className="bg-green-600 h-2 rounded-full" style={{ width: `${Math.min(monthMetrics.progress.collection_rate, 100)}%` }} />
                     </div>
                   </div>
-                  <div className="pt-2 text-sm text-gray-600">
-                    <p>📊 <strong>Analysis:</strong> {monthMetrics.progress.collection_rate < monthMetrics.month_progress_percentage ? 
-                      `Collection is behind schedule by ${(monthMetrics.month_progress_percentage - monthMetrics.progress.collection_rate).toFixed(1)}%.` : 
+                  <div className="pt-2 text-sm text-gray-600 bg-gray-50 rounded-lg p-3">
+                    <p><strong>Analysis:</strong> {monthMetrics.progress.collection_rate < monthMetrics.month_progress_percentage ?
+                      `Collection is behind schedule by ${(monthMetrics.month_progress_percentage - monthMetrics.progress.collection_rate).toFixed(1)}%.` :
                       `Collection is ahead of schedule!`}</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={TrendingUp} hint="Key performance indicators comparing expected vs actual collection">
                   Performance Snapshot
-                  <MetricHint text="Key performance indicators comparing expected vs actual collection" />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-4">
@@ -695,12 +874,11 @@ export default function OfficerAnalyticsPage() {
           </div>
 
           {/* Weekly Breakdown Chart */}
-          <Card>
+          <Card className="rounded-xl border border-gray-200 shadow-sm">
             <CardHeader>
-              <h2 className="text-lg font-semibold flex items-center">
+              <SectionTitle icon={BarChart3} hint="Shows target vs actual collected by week. 'In Progress' weeks are current, 'Completed' are past">
                 Weekly Collection Performance
-                <MetricHint text="Shows target vs actual collected by week. 'In Progress' weeks are current, 'Completed' are past" />
-              </h2>
+              </SectionTitle>
             </CardHeader>
             <CardContent>
               <div className="h-80">
@@ -708,11 +886,11 @@ export default function OfficerAnalyticsPage() {
                   <BarChart data={monthMetrics.weekly_breakdown}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="week_number" label={{ value: 'Week Number', position: 'insideBottom', offset: -5 }} />
-                    <YAxis tickFormatter={(value) => `KSh ${(value / 1000).toFixed(0)}k`} />
+                    <YAxis tickFormatter={(value: any) => `KSh ${(value / 1000).toFixed(0)}k`} />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
                     <Legend />
-                    <Bar dataKey="target" name="Weekly Target" fill="#8884d8" />
-                    <Bar dataKey="collected" name="Collected" fill="#82ca9d" />
+                    <Bar dataKey="target" name="Weekly Target" fill="#8884d8" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="collected" name="Collected" fill="#82ca9d" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -721,36 +899,35 @@ export default function OfficerAnalyticsPage() {
 
           {/* Installments & Peer Comparison */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={List} hint="Breakdown of installments: Total assigned to officer, current month status, overdue count">
                   Installments Overview
-                  <MetricHint text="Breakdown of installments: Total assigned to officer, current month status, overdue count" />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Total Assigned:</span>
                     <span className="font-medium">{monthMetrics.installments_breakdown.total_assigned}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Current Month:</span>
                     <span className="font-medium">{monthMetrics.installments_breakdown.current_month}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Current Month Paid:</span>
                     <span className="font-medium text-green-600">{monthMetrics.installments_breakdown.current_month_paid}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Active This Month:</span>
                     <span className="font-medium text-orange-600">{monthMetrics.installments_breakdown.current_month_active}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Paid Off Total:</span>
                     <span className="font-medium text-green-600">{monthMetrics.installments_breakdown.paid_off_total}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2">
                     <span className="text-gray-600">Overdue Total:</span>
                     <span className="font-medium text-red-600">{monthMetrics.installments_breakdown.overdue_total}</span>
                   </div>
@@ -758,32 +935,31 @@ export default function OfficerAnalyticsPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={Users} hint="How this officer performs compared to peers. Positive numbers mean better than average.">
                   Peer Comparison
-                  <MetricHint text="How this officer performs compared to peers. Positive numbers mean better than average." />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Target vs Peer Avg:</span>
                     <span className={`font-medium ${monthMetrics.peer_comparison.load_comparison.target_vs_avg >= 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {formatCurrency(monthMetrics.peer_comparison.load_comparison.target_vs_avg)}
                     </span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Collection Rate vs Avg:</span>
                     <span className={`font-medium ${monthMetrics.peer_comparison.comparison_vs_avg >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {monthMetrics.peer_comparison.comparison_vs_avg?.toFixed(1)}%
                     </span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-600">Percentile:</span>
                     <span className="font-medium">{monthMetrics.peer_comparison.percentile}th</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2">
                     <span className="text-gray-600">Rank:</span>
                     <span className="font-medium capitalize">{monthMetrics.peer_comparison.rank}</span>
                   </div>
@@ -794,13 +970,11 @@ export default function OfficerAnalyticsPage() {
 
           {/* Call & Promise Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
-                  <Phone size={18} className="mr-2" />
+                <SectionTitle icon={Phone} hint="Today's call activity: total calls, successful connections, average duration">
                   Call Metrics
-                  <MetricHint text="Today's call activity: total calls, successful connections, average duration" />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-4">
@@ -824,13 +998,11 @@ export default function OfficerAnalyticsPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
-                  <Mail size={18} className="mr-2" />
+                <SectionTitle icon={Mail} hint="Payment promises received vs fulfilled today. Fulfilled shows actual collection from promises.">
                   Promise Metrics
-                  <MetricHint text="Payment promises received vs fulfilled today. Fulfilled shows actual collection from promises." />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-4">
@@ -857,15 +1029,15 @@ export default function OfficerAnalyticsPage() {
         </div>
       )}
 
-      {/* WEEK VIEW - UPDATED */}
+      {/* WEEK VIEW */}
       {selectedView === 'week' && weekMetrics && (
         <div className="space-y-6">
           {/* Week Header Info */}
-          <Card className="bg-gradient-to-r from-blue-50 to-indigo-50">
+          <Card className="rounded-xl border border-blue-100 shadow-sm bg-gradient-to-r from-blue-50 to-indigo-50">
             <CardContent className="pt-6">
-              <div className="flex justify-between items-center flex-wrap">
+              <div className="flex justify-between items-center flex-wrap gap-2">
                 <div>
-                  <p className="text-sm text-gray-600">Week {weekMetrics.week_number} • {weekMetrics.year}</p>
+                  <p className="text-sm text-gray-600">Week {weekMetrics.week_number} &middot; {weekMetrics.year}</p>
                   <p className="text-lg font-semibold">{formatDate(weekMetrics.week_start)} - {formatDate(weekMetrics.week_end)}</p>
                 </div>
                 <div className="text-right">
@@ -877,83 +1049,73 @@ export default function OfficerAnalyticsPage() {
           </Card>
 
           {/* Week Overview Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center">
-                  <div className="rounded-full bg-blue-100 p-3 mr-4">
-                    <Target className="h-6 w-6 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 flex items-center">
-                      Full Week Target
-                      <MetricHint text="Total target for the entire week (all days included)" />
-                    </p>
-                    <p className="text-2xl font-bold">{formatCurrency(weekMetrics.weekly_targets.full_week_target)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center">
-                  <div className="rounded-full bg-green-100 p-3 mr-4">
-                    <DollarSign className="h-6 w-6 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 flex items-center">
-                      Collected WTD
-                      <MetricHint text="Total amount collected from Monday (week start) until today" />
-                    </p>
-                    <p className="text-2xl font-bold text-green-600">{formatCurrency(weekMetrics.collected_week_to_date)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center">
-                  <div className="rounded-full bg-purple-100 p-3 mr-4">
-                    <Clock className="h-6 w-6 text-purple-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 flex items-center">
-                      Collection Rate
-                      <MetricHint text="Collected vs Week-to-Date Target" />
-                    </p>
-                    <p className="text-2xl font-bold">{weekMetrics.collection_rate_vs_week_to_date?.toFixed(1)}%</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center">
-                  <div className={`rounded-full p-3 mr-4 ${weekMetrics.on_track ? 'bg-green-100' : 'bg-red-100'}`}>
-                    <Activity className={`h-6 w-6 ${weekMetrics.on_track ? 'text-green-600' : 'text-red-600'}`} />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 flex items-center">
-                      Week Status
-                      <MetricHint text="Whether weekly collection is on track to meet target" />
-                    </p>
-                    <p className="text-2xl font-bold">{weekMetrics.on_track ? 'On Track' : 'Behind'}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard
+              icon={Target}
+              iconBg="bg-blue-100"
+              iconColor="text-blue-600"
+              label="Full Week Target"
+              hint="Total target for the entire week (all days included)"
+              value={formatCurrency(weekMetrics.weekly_targets.full_week_target)}
+            />
+            <StatCard
+              icon={DollarSign}
+              iconBg="bg-green-100"
+              iconColor="text-green-600"
+              label="Collected WTD"
+              hint="Total amount collected from Monday (week start) until today"
+              value={formatCurrency(weekMetrics.collected_week_to_date)}
+              valueClassName="text-green-600"
+            />
+            <StatCard
+              icon={Clock}
+              iconBg="bg-purple-100"
+              iconColor="text-purple-600"
+              label="Collection Rate"
+              hint="Collected vs Week-to-Date Target"
+              value={`${weekMetrics.collection_rate_vs_week_to_date?.toFixed(1)}%`}
+            />
+            <StatCard
+              icon={Activity}
+              iconBg={weekMetrics.on_track ? 'bg-green-100' : 'bg-red-100'}
+              iconColor={weekMetrics.on_track ? 'text-green-600' : 'text-red-600'}
+              label="Week Status"
+              hint="Whether weekly collection is on track to meet target"
+              value={weekMetrics.on_track ? 'On Track' : 'Behind'}
+            />
           </div>
 
-          {/* Daily Breakdown Chart */}
-          <Card>
+          {/* PR Bucket Breakdown (NEW) */}
+          <Card className="rounded-xl border border-gray-200 shadow-sm">
             <CardHeader>
-              <h2 className="text-lg font-semibold flex items-center">
+              <SectionTitle
+                icon={Layers}
+                hint="CBK loan-aging categorization: percentaged target, amounts posted, and commission earned, broken down by PR bucket"
+              >
+                PR Bucket Breakdown
+              </SectionTitle>
+            </CardHeader>
+            <CardContent>
+              <PRBucketBreakdownGrid
+                breakdown={weekMetrics.pr_bucket_metrics?.pr_bucket_breakdown}
+                overall={{
+                  daily_target: weekMetrics.pr_bucket_metrics?.daily_percentaged_target,
+                  monthly_target: weekMetrics.pr_bucket_metrics?.monthly_percentaged_target,
+                  daily_posted: weekMetrics.pr_bucket_metrics?.daily_posted,
+                  monthly_posted: weekMetrics.pr_bucket_metrics?.monthly_posted,
+                  daily_commission: weekMetrics.pr_bucket_metrics?.daily_commission,
+                  monthly_commission: weekMetrics.pr_bucket_metrics?.monthly_commission,
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Daily Breakdown Chart */}
+          <Card className="rounded-xl border border-gray-200 shadow-sm">
+            <CardHeader>
+              <SectionTitle icon={BarChart3} hint="Daily collected amount vs cumulative target. Shows progress day by day.">
                 Daily Collection Trend
-                <MetricHint text="Daily collected amount vs cumulative target. Shows progress day by day." />
-              </h2>
+              </SectionTitle>
             </CardHeader>
             <CardContent>
               <div className="h-80">
@@ -961,7 +1123,7 @@ export default function OfficerAnalyticsPage() {
                   <ComposedChart data={weekMetrics.daily_breakdown}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="day_name" />
-                    <YAxis yAxisId="left" tickFormatter={(value) => `KSh ${(value / 1000).toFixed(0)}k`} />
+                    <YAxis yAxisId="left" tickFormatter={(value: any) => `KSh ${(value / 1000).toFixed(0)}k`} />
                     <YAxis yAxisId="right" orientation="right" />
                     <Tooltip formatter={(value: any, name: string) => {
                       if (name === 'collected_today') return formatCurrency(value);
@@ -969,7 +1131,7 @@ export default function OfficerAnalyticsPage() {
                       return value;
                     }} />
                     <Legend />
-                    <Bar yAxisId="left" dataKey="collected_today" name="Collected Today" fill="#82ca9d" />
+                    <Bar yAxisId="left" dataKey="collected_today" name="Collected Today" fill="#82ca9d" radius={[4, 4, 0, 0]} />
                     <Line yAxisId="left" type="monotone" dataKey="daily_cumulative_target" name="Cumulative Target" stroke="#8884d8" strokeWidth={2} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -978,15 +1140,14 @@ export default function OfficerAnalyticsPage() {
           </Card>
 
           {/* Daily Details Table */}
-          <Card>
+          <Card className="rounded-xl border border-gray-200 shadow-sm">
             <CardHeader>
-              <h2 className="text-lg font-semibold flex items-center">
+              <SectionTitle icon={List} hint="Performance for each day: target, collected, overdue count, and achievement percentage">
                 Daily Breakdown
-                <MetricHint text="Performance for each day: target, collected, overdue count, and achievement percentage" />
-              </h2>
+              </SectionTitle>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto rounded-lg border border-gray-100">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
@@ -1001,7 +1162,7 @@ export default function OfficerAnalyticsPage() {
                   </thead>
                   <tbody>
                     {weekMetrics.daily_breakdown.map((day, idx) => (
-                      <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
+                      <tr key={idx} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50">
                         <td className="py-3 px-4 font-medium">{day.day_name}</td>
                         <td className="py-3 px-4 text-gray-600">{formatDate(day.date)}</td>
                         <td className="py-3 px-4 text-right">{formatCurrency(day.daily_cumulative_target)}</td>
@@ -1023,24 +1184,23 @@ export default function OfficerAnalyticsPage() {
 
           {/* Week Projections */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={TrendingUp} hint="Based on average daily collection so far, projected end-of-week total and variance from target">
                   Projections
-                  <MetricHint text="Based on average daily collection so far, projected end-of-week total and variance from target" />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span>Average Daily Collection:</span>
                     <span className="font-medium">{formatCurrency(weekMetrics.average_daily_collection)}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span>Projected Weekly Total:</span>
                     <span className="font-medium">{formatCurrency(weekMetrics.projected_weekly_collection)}</span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2">
                     <span>Projected vs Full Target:</span>
                     <span className={`font-medium ${weekMetrics.projected_vs_target >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {formatCurrency(weekMetrics.projected_vs_target)}
@@ -1050,34 +1210,33 @@ export default function OfficerAnalyticsPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={Award} hint="Best and worst performing days based on collection amount and target achievement">
                   Efficiency Metrics
-                  <MetricHint text="Best and worst performing days based on collection amount and target achievement" />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span>Best Collection Day:</span>
                     <span className="font-medium text-green-600">
-                      {weekMetrics.enhanced_metrics.efficiency.best_collection_day.date 
+                      {weekMetrics.enhanced_metrics.efficiency.best_collection_day.date
                         ? formatDate(weekMetrics.enhanced_metrics.efficiency.best_collection_day.date)
-                        : 'N/A'} 
-                      ({formatCurrency(weekMetrics.enhanced_metrics.efficiency.best_collection_day.amount)})
+                        : 'N/A'}
+                      {' '}({formatCurrency(weekMetrics.enhanced_metrics.efficiency.best_collection_day.amount)})
                     </span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2 border-b border-gray-100">
                     <span>Best Achievement Day:</span>
                     <span className="font-medium">
-                      {weekMetrics.enhanced_metrics.efficiency.best_cumulative_day.date 
+                      {weekMetrics.enhanced_metrics.efficiency.best_cumulative_day.date
                         ? formatDate(weekMetrics.enhanced_metrics.efficiency.best_cumulative_day.date)
-                        : 'N/A'} 
-                      ({weekMetrics.enhanced_metrics.efficiency.best_cumulative_day.achievement?.toFixed(1)}%)
+                        : 'N/A'}
+                      {' '}({weekMetrics.enhanced_metrics.efficiency.best_cumulative_day.achievement?.toFixed(1)}%)
                     </span>
                   </div>
-                  <div className="flex justify-between py-2 border-b">
+                  <div className="flex justify-between py-2">
                     <span>Target Accuracy Range:</span>
                     <span className="font-medium">
                       {weekMetrics.enhanced_metrics.efficiency.target_accuracy_range.min?.toFixed(1)}% - {weekMetrics.enhanced_metrics.efficiency.target_accuracy_range.max?.toFixed(1)}%
@@ -1088,40 +1247,11 @@ export default function OfficerAnalyticsPage() {
             </Card>
           </div>
 
-          {/* Month Context */}
-          {/* <Card>
-            <CardHeader>
-              <h2 className="text-lg font-semibold flex items-center">
-                Month Context
-                <MetricHint text="How this week fits into the overall month: monthly target, week's share, MTD collected" />
-              </h2>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="text-center p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Monthly Target</p>
-                  <p className="text-xl font-bold">{formatCurrency(weekMetrics.month_context.monthly_target)}</p>
-                </div>
-                <div className="text-center p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Week Share of Month</p>
-                  <p className="text-xl font-bold">{weekMetrics.month_context.week_share_of_month?.toFixed(1)}%</p>
-                </div>
-                <div className="text-center p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Collected MTD</p>
-                  <p className="text-xl font-bold text-green-600">{formatCurrency(weekMetrics.month_context.collected_mtd)}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card> */}
-
           {/* Call & Promise Metrics for Week View */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
-                  <Phone size={18} className="mr-2" />
-                  Today's Call Metrics
-                </h2>
+                <SectionTitle icon={Phone}>Today's Call Metrics</SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-4">
@@ -1141,12 +1271,9 @@ export default function OfficerAnalyticsPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
-                  <Mail size={18} className="mr-2" />
-                  Today's Promise Metrics
-                </h2>
+                <SectionTitle icon={Mail}>Today's Promise Metrics</SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-4">
@@ -1173,17 +1300,16 @@ export default function OfficerAnalyticsPage() {
         </div>
       )}
 
-      {/* HISTORY VIEW - UPDATED */}
+      {/* HISTORY VIEW */}
       {selectedView === 'history' && (
         <div className="space-y-6">
           {/* Daily Trend Chart */}
           {dailyHistory && dailyHistory.data.length > 0 && (
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={BarChart3} hint="Shows daily collected amount vs daily cumulative balance over time. Green bars are collections, line shows total assigned balance.">
                   Daily Collection Trend (Last 30 Days)
-                  <MetricHint text="Shows daily collected amount vs daily cumulative balance over time. Green bars are collections, line shows total assigned balance." />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-80">
@@ -1191,11 +1317,11 @@ export default function OfficerAnalyticsPage() {
                     <ComposedChart data={dailyHistory.data.slice(-30)}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="date" />
-                      <YAxis yAxisId="left" tickFormatter={(value) => `KSh ${(value / 1000).toFixed(0)}k`} />
+                      <YAxis yAxisId="left" tickFormatter={(value: any) => `KSh ${(value / 1000).toFixed(0)}k`} />
                       <YAxis yAxisId="right" orientation="right" />
                       <Tooltip formatter={(value: any) => formatCurrency(value)} />
                       <Legend />
-                      <Bar yAxisId="left" dataKey="collected_during_day" name="Collected Daily" fill="#82ca9d" />
+                      <Bar yAxisId="left" dataKey="collected_during_day" name="Collected Daily" fill="#82ca9d" radius={[4, 4, 0, 0]} />
                       <Line yAxisId="right" type="monotone" dataKey="daily_cumulative_balance" name="Cumulative Balance" stroke="#8884d8" strokeWidth={2} />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -1206,12 +1332,11 @@ export default function OfficerAnalyticsPage() {
 
           {/* Collection Rate Trend */}
           {dailyHistory && dailyHistory.data.length > 0 && (
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={Percent} hint="Daily collection rate percentage shows what % of the target was collected each day.">
                   Collection Rate Trend
-                  <MetricHint text="Daily collection rate percentage shows what % of the target was collected each day." />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-80">
@@ -1219,7 +1344,7 @@ export default function OfficerAnalyticsPage() {
                     <LineChart data={dailyHistory.data.slice(-30)}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="date" />
-                      <YAxis domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
+                      <YAxis domain={[0, 100]} tickFormatter={(value: any) => `${value}%`} />
                       <Tooltip formatter={(value: any) => `${value?.toFixed(1)}%`} />
                       <Legend />
                       <Line type="monotone" dataKey="collection_rate" name="Daily Collection Rate %" stroke="#ff7300" strokeWidth={2} />
@@ -1233,13 +1358,11 @@ export default function OfficerAnalyticsPage() {
 
           {/* Call & Promise Trend */}
           {dailyHistory && dailyHistory.data.length > 0 && (
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
-                  <Phone size={18} className="mr-2" />
+                <SectionTitle icon={Phone} hint="Shows calls made vs successful calls over time. The gap indicates missed connections.">
                   Call Activity Trend
-                  <MetricHint text="Shows calls made vs successful calls over time. The gap indicates missed connections." />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-80">
@@ -1248,11 +1371,11 @@ export default function OfficerAnalyticsPage() {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="date" />
                       <YAxis yAxisId="left" />
-                      <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
+                      <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tickFormatter={(value: any) => `${value}%`} />
                       <Tooltip />
                       <Legend />
-                      <Bar yAxisId="left" dataKey="calls_made" name="Calls Made" fill="#8884d8" />
-                      <Bar yAxisId="left" dataKey="successful_calls" name="Successful Calls" fill="#82ca9d" />
+                      <Bar yAxisId="left" dataKey="calls_made" name="Calls Made" fill="#8884d8" radius={[4, 4, 0, 0]} />
+                      <Bar yAxisId="left" dataKey="successful_calls" name="Successful Calls" fill="#82ca9d" radius={[4, 4, 0, 0]} />
                       <Line yAxisId="right" type="monotone" dataKey="call_success_rate" name="Success Rate %" stroke="#ff7300" strokeWidth={2} />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -1262,15 +1385,14 @@ export default function OfficerAnalyticsPage() {
           )}
 
           {/* Daily History Table */}
-          <Card>
+          <Card className="rounded-xl border border-gray-200 shadow-sm">
             <CardHeader>
-              <h2 className="text-lg font-semibold flex items-center">
+              <SectionTitle icon={List} hint="Complete daily breakdown including collection, calls, promises, and achievement rates">
                 Daily Performance Log
-                <MetricHint text="Complete daily breakdown including collection, calls, promises, and achievement rates" />
-              </h2>
+              </SectionTitle>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto rounded-lg border border-gray-100">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
@@ -1285,7 +1407,7 @@ export default function OfficerAnalyticsPage() {
                   </thead>
                   <tbody>
                     {dailyHistory?.data?.slice().reverse().slice(0, 30).map((day, idx) => (
-                      <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
+                      <tr key={idx} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50">
                         <td className="py-3 px-3 font-medium">{formatDate(day.date)}</td>
                         <td className="py-3 px-3 text-right text-green-600">{formatCurrency(day.collected_during_day)}</td>
                         <td className="py-3 px-3 text-right">{formatCurrency(day.daily_cumulative_balance)}</td>
@@ -1307,35 +1429,57 @@ export default function OfficerAnalyticsPage() {
 
           {/* Monthly Summary */}
           {monthlyHistory && monthlyHistory.data.length > 0 && (
-            <Card>
+            <Card className="rounded-xl border border-gray-200 shadow-sm">
               <CardHeader>
-                <h2 className="text-lg font-semibold flex items-center">
+                <SectionTitle icon={Calendar} hint="Month-over-month collection totals, collection rates, resolved counts, and PR bucket performance">
                   Monthly Performance Summary
-                  <MetricHint text="Month-over-month collection totals, collection rates, and resolved counts" />
-                </h2>
+                </SectionTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {monthlyHistory.data.map((month, idx) => (
-                    <div key={idx} className="p-4 bg-gray-50 rounded-lg">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div key={idx} className="p-4 bg-gray-50 rounded-lg border border-gray-100 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
-                          <p className="text-xs text-gray-500">Period</p>
-                          <p className="font-medium text-sm">{formatDate(month.month_start_date)} - {formatDate(month.month_end_date)}</p>
+                          <p className="text-xs text-gray-500">
+                            {month.year_annot}-{String(month.month_annot).padStart(2, '0')}
+                          </p>
+                          <p className="font-medium text-sm text-gray-900">
+                            {formatDate(month.month_start_date)} - {formatDate(month.month_end_date)}
+                          </p>
                         </div>
-                        <div>
-                          <p className="text-xs text-gray-500">Total Collected</p>
-                          <p className="font-medium text-green-600">{formatCurrency(month.total_collected_month)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500">Collection Rate</p>
-                          <p className="font-medium">{month.avg_collection_rate?.toFixed(1)}%</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500">Resolved</p>
-                          <p className="font-medium">{month.total_resolved_month}</p>
-                        </div>
+                        {typeof month.cumulative_balance_change_percentage === 'number' && (
+                          <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                            month.cumulative_balance_change <= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            Balance {month.cumulative_balance_change >= 0 ? '+' : ''}{month.cumulative_balance_change_percentage?.toFixed(1)}%
+                          </span>
+                        )}
                       </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <MiniStat label="Total Collected" value={formatCurrency(month.total_collected_month)} tone="green" />
+                        <MiniStat label="Collected (MTD End)" value={formatCurrency(month.total_collected_mtd_end)} />
+                        <MiniStat label="Collection Rate" value={`${month.avg_collection_rate?.toFixed(1)}%`} />
+                        <MiniStat label="Resolved" value={month.total_resolved_month} />
+                        <MiniStat label="Calls" value={month.total_calls} />
+                        <MiniStat label="Promises" value={month.total_promises} />
+                        <MiniStat label="Repayments" value={month.total_repayments} />
+                        <MiniStat label="Daily Target Achv." value={`${month.avg_daily_target_achievement?.toFixed(1)}%`} />
+                      </div>
+
+                      <PRBucketBreakdownGrid
+                        compact
+                        breakdown={month.pr_bucket_breakdown}
+                        overall={{
+                          daily_target: month.avg_daily_percentaged_target,
+                          monthly_target: month.monthly_percentaged_target,
+                          daily_posted: month.total_daily_posted,
+                          monthly_posted: month.monthly_posted,
+                          daily_commission: month.total_daily_commission,
+                          monthly_commission: month.monthly_commission,
+                        }}
+                      />
                     </div>
                   ))}
                 </div>

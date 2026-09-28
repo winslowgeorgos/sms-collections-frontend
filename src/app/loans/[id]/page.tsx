@@ -5,8 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api';
-import { 
-  ArrowLeft, Phone, Mail, Calendar, DollarSign, 
+import {
+  ArrowLeft, Phone, Mail, Calendar, DollarSign,
   Clock, AlertCircle, CheckCircle, User, Building,
   FileText, MessageSquare, PhoneCall, Download, Edit,
   Trash2, Eye, MessageCircle, Bell, Plus, FileWarning,
@@ -37,6 +37,9 @@ export interface LoanDetails {
     this_month_active_installment: number;
     created_at: string;
     last_sync_at: string;
+    pr_bucket: string | null;
+    loan_percentaged_target: number | null;
+    loan_commission: number | null;
   };
   installments: Installment[];
   assignments: any[];
@@ -58,16 +61,51 @@ interface Installment {
   id: string;
   installment_id: number;
   plan_type: string;
-  total_amount: number;
-  repaid: number;
-  balance: number;
+  // NOTE: total_amount/repaid/balance/cumulative_balance and every *_due /
+  // *_paid breakdown field are Decimal fields on the backend. This endpoint
+  // (/loan-processor/loan-details/{id}/) builds its `installments` list via
+  // Django's `.values(...)` rather than a DRF serializer, but DRF's Response
+  // JSON encoder still serializes Decimal as a quoted STRING (e.g.
+  // "26613.00"), not a JSON number -- same as /api/collections/installments/.
+  // Keep these as `string` and parse with parseFloat before doing arithmetic.
+  total_amount: string;
+  repaid: string;
+  balance: string;
   due_date: string;
   status: number;
   is_overdue: boolean;
   days_until_due: number;
   is_current_month: boolean;
   paid_off: boolean;
-  cumulative_balance: number;
+  cumulative_balance: string;
+  // Detailed breakdown fields (from backend)
+  principal_due?: string;
+  principal_paid?: string;
+  interest_due?: string;
+  interest_paid?: string;
+  penalty_due?: string;
+  penalty_paid?: string;
+  tracking_fees_due?: string;
+  tracking_fees_paid?: string;
+  loan_maintenance_fee_due?: string;
+  loan_maintenance_fee_paid?: string;
+  other_charges_due?: string;
+  other_charges_paid?: string;
+  early_settlement_interest_due?: string;
+  early_settlement_interest_paid?: string;
+  // CBK PR bucket categorization / commission fields.
+  // Only percentaged_target_updated_at / commission_baseline_at are
+  // nullable on the backend model (DateTimeField(null=True)); the rest are
+  // non-nullable with default=0, so they're never null -- match InstallmentTable.tsx's
+  // Installment interface exactly here to avoid a prop-type mismatch.
+  actual_installment_due_days: number;
+  pr_bucket: string | null;
+  pr_bucket_team: string | null;
+  percentaged_target: string;
+  percentaged_target_updated_at: string | null;
+  installment_commission: string;
+  commission_baseline_repaid: string;
+  commission_baseline_at: string | null;
 }
 
 interface SMSLog {
@@ -109,6 +147,18 @@ interface CurrentMonthInstallment {
   paid_off: boolean;
   cumulative_balance: number;
   id?: string;
+  // CBK PR bucket categorization / commission fields. This object is built by
+  // MainLoan.get_active_installment_details(), which always calls float() on
+  // these (never None) except the two DateTimeFields below, which are
+  // genuinely nullable on the model.
+  actual_installment_due_days: number;
+  pr_bucket: string | null;
+  pr_bucket_team: string | null;
+  percentaged_target: number;
+  percentaged_target_updated_at: string | null;
+  installment_commission: number;
+  commission_baseline_repaid: number;
+  commission_baseline_at: string | null;
 }
 
 interface CallLogsResponse {
@@ -178,7 +228,7 @@ export default function LoanDetailsPage() {
   const [callLogsData, setCallLogsData] = useState<CallLogsResponse | null>(null);
   const [selectedInstallment, setSelectedInstallment] = useState<Installment | null>(null);
   const [isSendSMSModalOpen, setIsSendSMSModalOpen] = useState(false);
-  
+
   // Demand letter states
   const [isDemandLetterModalOpen, setIsDemandLetterModalOpen] = useState(false);
   const [isEditDemandLetterModalOpen, setIsEditDemandLetterModalOpen] = useState(false);
@@ -187,7 +237,7 @@ export default function LoanDetailsPage() {
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isDownloadingPDF, setIsDownloadingPDF] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
-  
+
   // Updated editFormData with new loan fields
   const [editFormData, setEditFormData] = useState({
     customer_name: '',
@@ -307,10 +357,10 @@ export default function LoanDetailsPage() {
         preview: false,
         send_email: sendEmail
       });
-      
+
       setDemandLetterData(response.data);
       setIsDemandLetterModalOpen(true);
-      
+
       if (sendEmail && response.data.email_sent) {
         alert('Demand letter generated and sent to customer email!');
       } else if (sendEmail && !response.data.email_sent) {
@@ -332,7 +382,7 @@ export default function LoanDetailsPage() {
       const response = await client.post('/loan-processor/preview-demand-letter/', {
         loan_id: loanId
       });
-      
+
       // Open preview in new window with the HTML
       const previewWindow = window.open();
       if (previewWindow) {
@@ -355,17 +405,17 @@ export default function LoanDetailsPage() {
 
     setIsDownloadingPDF(true);
     setShowDropdown(false);
-    
+
     try {
       const client = apiClient.getClient();
       const pdfUrl = `/loan-processor/serve-pdf/${loanId}/${demandLetterData.document_id}/`;
-      
+
       console.log('Downloading PDF from:', pdfUrl);
-      
+
       const response = await client.get(pdfUrl, {
         responseType: 'blob'
       });
-      
+
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -375,10 +425,10 @@ export default function LoanDetailsPage() {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      
+
     } catch (error: any) {
       console.error('Error downloading PDF:', error);
-      
+
       if (error.response?.status === 401) {
         alert('Authentication failed. Please log in again.');
       } else if (error.response?.status === 404) {
@@ -433,7 +483,7 @@ export default function LoanDetailsPage() {
       alert('Phone number is required');
       return;
     }
-    
+
     // NEW: Validate loan fields
     if (!editFormData.principal_amount || editFormData.principal_amount <= 0) {
       alert('Principal amount must be greater than 0');
@@ -451,12 +501,12 @@ export default function LoanDetailsPage() {
       alert('Monthly installment must be greater than 0');
       return;
     }
-    
+
     setIsGeneratingDemandLetter(true);
     try {
       const client = apiClient.getClient();
       const response = await client.post(`/loan-processor/edit-demand-letter/${loanId}/`, editFormData);
-      
+
       // Update the demand letter data with the new regenerated version
       setDemandLetterData({
         ...demandLetterData!,
@@ -471,7 +521,7 @@ export default function LoanDetailsPage() {
         generated_at: response.data.generated_at,
         message: response.data.message
       });
-      
+
       // Show appropriate message based on email change
       if (response.data.email_changed) {
         alert(
@@ -482,9 +532,9 @@ export default function LoanDetailsPage() {
       } else {
         alert('✅ Demand letter updated and regenerated successfully! A new document has been created.');
       }
-      
+
       setIsEditDemandLetterModalOpen(false);
-      
+
     } catch (error: any) {
       console.error('Error editing demand letter:', error);
       const errorMessage = error.response?.data?.error || 'Failed to edit demand letter';
@@ -502,7 +552,7 @@ export default function LoanDetailsPage() {
         loan_id: loanId,
         cc: []
       });
-      
+
       if (response.data.success) {
         alert(`Demand letter sent successfully to ${response.data.recipient}!`);
       } else {
@@ -593,7 +643,7 @@ export default function LoanDetailsPage() {
           {hasAccess('can_generate_demand_letter') && (
             <div className="relative">
               <div className="flex">
-                <Button 
+                <Button
                   className="bg-red-600 hover:bg-red-700 rounded-r-none"
                   onClick={() => handleGenerateDemandLetter(false)}
                   disabled={isGeneratingDemandLetter}
@@ -605,7 +655,7 @@ export default function LoanDetailsPage() {
                   )}
                   Demand Letter
                 </Button>
-                
+
                 <button
                   onClick={() => setShowDropdown(!showDropdown)}
                   className="px-2 bg-red-700 rounded-r-md hover:bg-red-800 focus:outline-none"
@@ -616,12 +666,12 @@ export default function LoanDetailsPage() {
                   </svg>
                 </button>
               </div>
-              
+
               {/* Dropdown menu */}
               {showDropdown && (
                 <>
-                  <div 
-                    className="fixed inset-0 z-10" 
+                  <div
+                    className="fixed inset-0 z-10"
                     onClick={() => setShowDropdown(false)}
                   />
                   <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-20 border">
@@ -693,7 +743,7 @@ export default function LoanDetailsPage() {
 
           {/* Log Call button */}
           {hasAccess('add_calllog') && (
-            <Button 
+            <Button
               className="bg-blue-600 hover:bg-blue-700"
               onClick={handleLogCall}
             >
@@ -722,7 +772,7 @@ export default function LoanDetailsPage() {
                 </div>
               )}
             </div>
-            
+
             <div>
               <p className="text-sm text-gray-600">Loan Amount</p>
               <p className="text-lg font-semibold">KSh {main_loan.apply_amount.toLocaleString()}</p>
@@ -730,14 +780,14 @@ export default function LoanDetailsPage() {
                 Paid: KSh {main_loan.total_paid.toLocaleString()}
               </p>
             </div>
-            
+
             <div>
               <p className="text-sm text-gray-600">Outstanding</p>
               <p className={`text-lg font-semibold ${main_loan.total_outstanding > 0 ? 'text-red-600' : 'text-green-600'}`}>
                 KSh {main_loan.total_outstanding.toLocaleString()}
               </p>
             </div>
-            
+
             <div>
               <p className="text-sm text-gray-600">Due Date</p>
               <p className="text-lg font-semibold">
@@ -759,10 +809,34 @@ export default function LoanDetailsPage() {
             </div>
           </div>
 
+          {/* PR Bucket / Target / Commission Summary */}
+          {(main_loan.pr_bucket || main_loan.loan_percentaged_target !== null || main_loan.loan_commission !== null) && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+              <div>
+                <p className="text-sm text-gray-600">PR Bucket</p>
+                <p className="text-lg font-semibold">
+                  {main_loan.pr_bucket ? main_loan.pr_bucket.replace(/_/g, ' ') : 'Not categorized'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Percentaged Target</p>
+                <p className="text-lg font-semibold">
+                  KSh {(main_loan.loan_percentaged_target ?? 0).toLocaleString()}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Commission</p>
+                <p className="text-lg font-semibold text-green-700">
+                  KSh {(main_loan.loan_commission ?? 0).toLocaleString()}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Quick Actions */}
           <div className="mt-4 flex flex-wrap gap-2">
             {hasAccess('add_smslog') && (
-              <Button 
+              <Button
                 variant="outline"
                 onClick={() => setIsSendSMSModalOpen(true)}
               >
@@ -821,15 +895,50 @@ export default function LoanDetailsPage() {
                 </div>
                      <div>
                   <p className="text-xs text-gray-600">Cumulative Balance</p>
-                  <p className="font-medium text-orange-600">KSh {current_month_installment.cumulative_balance.toLocaleString()}</p>
+                  {/* FRONTEND-ONLY display floor: cumulative_balance can go negative
+                      on an overpayment -- there's nothing outstanding at that point,
+                      so show KSh 0 rather than a confusing negative balance. */}
+                  <p className="font-medium text-orange-600">
+                    KSh {Math.max(0, current_month_installment.cumulative_balance).toLocaleString()}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-600">Status</p>
-                  <p className={`font-medium ${current_month_installment.is_overdue ? 'text-red-600' : 'text-green-600'}`}>
-                    {current_month_installment.is_overdue ? 'Overdue' : 'Current'}
-                  </p>
+                  {/* FRONTEND-ONLY override: once cumulative_balance is 0 or negative
+                      (fully paid, or overpaid), always show "Paid" regardless of the
+                      server's is_overdue flag, which can lag a same-day payment.
+                      Mirrors the same rule applied to the installment table below. */}
+                  {current_month_installment.cumulative_balance <= 0 ? (
+                    <p className="font-medium text-green-600">Paid</p>
+                  ) : (
+                    <p className={`font-medium ${current_month_installment.is_overdue ? 'text-red-600' : 'text-green-600'}`}>
+                      {current_month_installment.is_overdue ? 'Overdue' : 'Current'}
+                    </p>
+                  )}
                 </div>
               </div>
+              {/* {(current_month_installment.pr_bucket || current_month_installment.installment_commission !== null) && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 pt-3 border-t border-blue-100">
+                  <div>
+                    <p className="text-xs text-gray-600">PR Bucket</p>
+                    <p className="font-medium">
+                      {current_month_installment.pr_bucket ? current_month_installment.pr_bucket.replace(/_/g, ' ') : 'Not categorized'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-600">Percentaged Target</p>
+                    <p className="font-medium">
+                      KSh {(current_month_installment.percentaged_target ?? 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-600">Commission (this month)</p>
+                    <p className="font-medium text-green-700">
+                      KSh {(current_month_installment.installment_commission ?? 0).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              )} */}
             </div>
           )}
         </CardContent>
@@ -912,7 +1021,7 @@ export default function LoanDetailsPage() {
                   )}
                 </div>
               </div>
-              
+
               {(callLogsData?.calls.length || 0) === 0 ? (
                 <div className="text-center py-12">
                   <PhoneCall className="mx-auto h-12 w-12 text-gray-400" />
@@ -930,8 +1039,8 @@ export default function LoanDetailsPage() {
               ) : (
                 <div className="space-y-4">
                   {(callLogsData?.calls || []).map((call) => (
-                    <div 
-                      key={call.id} 
+                    <div
+                      key={call.id}
                       className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
                       onClick={() => handleViewCallLog(call.id)}
                     >
@@ -950,7 +1059,7 @@ export default function LoanDetailsPage() {
                               </span>
                             )}
                           </div>
-                          
+
                           <div className="grid grid-cols-3 gap-4 text-sm">
                             <div>
                               <span className="text-gray-500">Officer:</span>
@@ -965,7 +1074,7 @@ export default function LoanDetailsPage() {
                               <p className="font-medium">{new Date(call.call_time).toLocaleTimeString()}</p>
                             </div>
                           </div>
-                          
+
                           {call.notes && (
                             <p className="mt-2 text-sm text-gray-600 line-clamp-2">{call.notes}</p>
                           )}
@@ -1096,9 +1205,9 @@ export default function LoanDetailsPage() {
                   <Edit size={16} className="mr-2" />
                   Edit & Regenerate
                 </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={handleDownloadPDF}
                   disabled={isDownloadingPDF}
                 >
@@ -1109,8 +1218,8 @@ export default function LoanDetailsPage() {
                   )}
                   Download PDF
                 </Button>
-                <Button 
-                  size="sm" 
+                <Button
+                  size="sm"
                   onClick={handleSendDemandLetterEmail}
                   disabled={isSendingEmail}
                   className="bg-blue-600 hover:bg-blue-700"
@@ -1127,7 +1236,7 @@ export default function LoanDetailsPage() {
                 </Button>
               </div>
             </div>
-            
+
             {/* Content */}
             <div className="flex-1 overflow-auto p-4">
               {/* Letter info summary */}
@@ -1154,7 +1263,7 @@ export default function LoanDetailsPage() {
                     </p>
                   </div>
                 </div>
-                
+
                 {/* Due Dates Summary */}
                 {demandLetterData.letter_data.loan_info && (
                   <div className="mt-4 pt-4 border-t border-gray-200">
@@ -1168,8 +1277,8 @@ export default function LoanDetailsPage() {
                           {demandLetterData.letter_data.loan_info.first_payment_due_date || 'N/A'}
                         </p>
                       </div>
-                      
-                      {demandLetterData.letter_data.loan_info.manual_due_dates && 
+
+                      {demandLetterData.letter_data.loan_info.manual_due_dates &&
                        demandLetterData.letter_data.loan_info.manual_due_dates.length > 0 && (
                         <div>
                           <p className="text-xs text-gray-500 flex items-center gap-1">
@@ -1178,7 +1287,7 @@ export default function LoanDetailsPage() {
                           </p>
                           <div className="flex flex-wrap gap-2 mt-1">
                             {demandLetterData.letter_data.loan_info.manual_due_dates.map((date: string, index: number) => (
-                              <span 
+                              <span
                                 key={index}
                                 className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded"
                               >
@@ -1189,8 +1298,8 @@ export default function LoanDetailsPage() {
                         </div>
                       )}
                     </div>
-                    
-                    {demandLetterData.letter_data.loan_info.manual_due_dates && 
+
+                    {demandLetterData.letter_data.loan_info.manual_due_dates &&
                      demandLetterData.letter_data.loan_info.manual_due_dates.length > 0 && (
                       <p className="text-xs text-amber-600 mt-2">
                         Note: This letter includes multiple overdue installment dates as indicated above.
@@ -1199,10 +1308,10 @@ export default function LoanDetailsPage() {
                   </div>
                 )}
               </div>
-              
+
               {/* Letter preview */}
               {demandLetterData.preview_html ? (
-                <div 
+                <div
                   className="border rounded-lg p-4 bg-white overflow-auto max-h-[500px]"
                   dangerouslySetInnerHTML={{ __html: demandLetterData.preview_html }}
                 />
@@ -1228,7 +1337,7 @@ export default function LoanDetailsPage() {
                 <X size={16} />
               </Button>
             </div>
-            
+
             {/* Warning Banner - Regeneration Notice */}
             <div className="bg-yellow-50 p-4 border-b border-yellow-200">
               <div className="flex items-start">
@@ -1239,7 +1348,7 @@ export default function LoanDetailsPage() {
                 </div>
               </div>
             </div>
-            
+
             {/* Form Content */}
             <div className="flex-1 overflow-auto p-4 space-y-4">
               {/* Customer Name & ID Number */}
@@ -1322,8 +1431,8 @@ export default function LoanDetailsPage() {
                     value={editFormData.email}
                     onChange={(e) => setEditFormData({...editFormData, email: e.target.value})}
                     className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
-                      editFormData.email !== demandLetterData?.letter_data.customer.email 
-                        ? 'border-yellow-500 bg-yellow-50' 
+                      editFormData.email !== demandLetterData?.letter_data.customer.email
+                        ? 'border-yellow-500 bg-yellow-50'
                         : 'border-gray-300'
                     }`}
                     placeholder="customer@example.com"
@@ -1393,7 +1502,7 @@ export default function LoanDetailsPage() {
                   Loan Information
                   <span className="text-xs text-gray-500 ml-2">(Edit loan details)</span>
                 </label>
-                
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1422,11 +1531,11 @@ export default function LoanDetailsPage() {
                         if (dateStr) {
                           const date = new Date(dateStr);
                           setEditFormData({
-                            ...editFormData, 
-                            loan_date: date.toLocaleDateString('en-US', { 
-                              day: 'numeric', 
-                              month: 'long', 
-                              year: 'numeric' 
+                            ...editFormData,
+                            loan_date: date.toLocaleDateString('en-US', {
+                              day: 'numeric',
+                              month: 'long',
+                              year: 'numeric'
                             })
                           });
                         } else {
@@ -1439,7 +1548,7 @@ export default function LoanDetailsPage() {
                     <p className="text-xs text-gray-500 mt-1">The date the loan was disbursed</p>
                   </div>
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-4 mt-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1472,7 +1581,7 @@ export default function LoanDetailsPage() {
                     <p className="text-xs text-gray-500 mt-1">This will update the monthly installment amount in the letter</p>
                   </div>
                 </div>
-                
+
                 {/* Preview of formatted loan date */}
                 {editFormData.loan_date && (
                   <div className="mt-3 p-2 bg-white rounded border border-gray-200">
@@ -1489,7 +1598,7 @@ export default function LoanDetailsPage() {
                   <CalendarIcon className="inline h-4 w-4 mr-1" />
                   Installment Due Dates
                 </label>
-                
+
                 {/* Display first payment due date (read-only) */}
                 <div className="mb-3">
                   <label className="text-sm text-gray-600">First Payment Due Date (from system)</label>
@@ -1507,7 +1616,7 @@ export default function LoanDetailsPage() {
                     Additional Overdue Installment Dates
                     <span className="text-xs text-gray-500 ml-2">(Optional - add multiple dates)</span>
                   </label>
-                  
+
                   {/* List of manual due dates */}
                   {editFormData.manual_due_dates.length > 0 ? (
                     <div className="space-y-2 mb-3">
@@ -1623,9 +1732,9 @@ export default function LoanDetailsPage() {
               {/* Information Note - Updated */}
               <div className="bg-gray-50 p-3 rounded-lg">
                 <p className="text-sm text-gray-600">
-                  <strong>ℹ️ Note:</strong> You can now edit the principal amount, loan date, 
-                  loan term, and monthly installment. These changes will be reflected in the 
-                  regenerated demand letter. Other loan details like interest rate and payment 
+                  <strong>ℹ️ Note:</strong> You can now edit the principal amount, loan date,
+                  loan term, and monthly installment. These changes will be reflected in the
+                  regenerated demand letter. Other loan details like interest rate and payment
                   due day are system-calculated and cannot be edited here.
                 </p>
               </div>
@@ -1633,8 +1742,8 @@ export default function LoanDetailsPage() {
 
             {/* Footer */}
             <div className="flex justify-end space-x-3 p-4 border-t">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => {
                   // Reset form to original values
                   if (demandLetterData) {
@@ -1661,8 +1770,8 @@ export default function LoanDetailsPage() {
               >
                 Cancel
               </Button>
-              <Button 
-                onClick={handleEditDemandLetter} 
+              <Button
+                onClick={handleEditDemandLetter}
                 disabled={isGeneratingDemandLetter || !editFormData.customer_name || !editFormData.phone}
                 className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >

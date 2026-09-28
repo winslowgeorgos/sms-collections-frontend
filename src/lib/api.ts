@@ -1,149 +1,142 @@
 // lib/api.ts
-import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
-import { API_BASE_URL, OUT_API_BASE_URL, AUTH_TOKEN_KEY, USER_KEY, USER_DETAILS_KEY } from './constants';
+import axios, { AxiosError, AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
+import { API_BASE_URL, OUT_API_BASE_URL, AUTH_TOKEN_KEY } from './constants';
 import { AuthTokens } from '@/types';
-import {encryptAndStore,retrieveAndDecrypt,removeFromDataStore,setSessionSeed,clearSecuritySession,} from '@/utils/sec';
+import {
+  encryptAndStore,
+  retrieveAndDecrypt,
+  removeFromDataStore,
+  setSessionSeed,
+  rotateSessionSeed,
+  getSessionSeed,
+  clearSecuritySession,
+  SESSION_CLEARED_EVENT,
+  SESSION_UPDATED_EVENT,
+} from '@/utils/sec';
 
-// Helper function to determine which base URL to use
-const getBaseUrl = (): string => {
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    // Check if the browser route reads 10.24.1.1
-    console.log("hostname : ", hostname)
-    if (hostname === '10.24.1.1') {
-      return OUT_API_BASE_URL;
-    }
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const EXTERNAL_HOST = '10.24.1.1';
+export const REQUEST_TIMEOUT_MS = 210_000; // 3.5 min — long-running report endpoints
+const REFRESH_TIMEOUT_MS = 30_000;
+const REFRESH_LOCK_NAME = 'sms-collections-token-refresh';
+const LOGIN_PATH = '/login';
+
+// Requests that must never carry a bearer token or trigger a refresh/retry loop.
+const AUTH_PATH_PREFIXES = ['/token/', '/auth/password/'];
+
+/** Pick internal vs external base URL based on how the app was reached. */
+export const resolveBaseUrl = (internalUrl: string, externalUrl: string): string =>
+  typeof window !== 'undefined' && window.location.hostname === EXTERNAL_HOST ? externalUrl : internalUrl;
+
+const getBaseUrl = (): string => resolveBaseUrl(API_BASE_URL, OUT_API_BASE_URL);
+
+type RetriableConfig = InternalAxiosRequestConfig & { _retry?: boolean };
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function isAuthEndpoint(url = ''): boolean {
+  return AUTH_PATH_PREFIXES.some((p) => url.startsWith(p));
+}
+
+function bearerFrom(header: unknown): string | null {
+  const value = typeof header === 'string' ? header : '';
+  return value.replace(/^Bearer\s+/i, '') || null;
+}
+
+/** True when a JWT's `exp` is in the past (with a small safety margin). Unknown → false. */
+function isJwtExpired(token: string, skewSeconds = 30): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now() + skewSeconds * 1000;
+  } catch {
+    return false;
   }
-  return API_BASE_URL;
-};
+}
 
+/** Keep the AxiosError (status, response data) but give it a user-facing message. */
+function withMessage(error: AxiosError, message: string): AxiosError {
+  error.message = message;
+  return error;
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
 class APIClient {
-  private client: AxiosInstance;
-  private isRefreshing = false;
-  private refreshSubscribers: ((token: string) => void)[] = [];
-  
-  // In-memory token cache to support synchronous Axios request interceptors
+  private readonly client: AxiosInstance;
+
+  // In-memory token cache; the encrypted vault is the source of truth shared by all tabs.
   private cachedTokens: AuthTokens | null = null;
-  private isInitialized = false;
-  private initPromise: Promise<void> | null = null;
+  // Bumped on every login/logout/external session change so in-flight vault reads can't
+  // resurrect tokens that were cleared while they were running.
+  private authEpoch = 0;
+
+  private loadPromise: Promise<AuthTokens | null> | null = null;
+  private refreshPromise: Promise<AuthTokens | null> | null = null;
+  private logoutPromise: Promise<void> | null = null;
 
   constructor() {
     this.client = axios.create({
       baseURL: getBaseUrl(),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      timeout: 210000, // 30 seconds timeout
+      headers: { 'Content-Type': 'application/json' },
+      timeout: REQUEST_TIMEOUT_MS,
     });
 
-    this.setupInterceptors();
-    this.initializeCache();
-  }
+    this.attachAuthInterceptors(this.client);
 
-  private async initializeCache(): Promise<void> {
-    if (typeof window === 'undefined') return;
-    if (this.isInitialized) return;
+    if (typeof window !== 'undefined') {
+      void this.loadTokensFromVault();
 
-    if (!this.initPromise) {
-      this.initPromise = (async () => {
-        try {
-          const tokens = await retrieveAndDecrypt<AuthTokens>(AUTH_TOKEN_KEY);
-          if (tokens) {
-            this.cachedTokens = tokens;
-          }
-        } catch (error) {
-          console.error('[APIClient] Error initializing token cache from vault:', error);
-        } finally {
-          this.isInitialized = true;
-        }
-      })();
+      // Another tab logged out → drop tokens and leave.
+      window.addEventListener(SESSION_CLEARED_EVENT, () => {
+        this.dropCachedTokens();
+        this.redirectToLogin();
+      });
+      // Another tab logged in / refreshed with a new seed → re-read the vault on next request.
+      window.addEventListener(SESSION_UPDATED_EVENT, () => this.dropCachedTokens());
     }
-
-    return this.initPromise;
   }
 
-  private setupInterceptors() {
-    // Request interceptor
-    this.client.interceptors.request.use(
-      async (config: InternalAxiosRequestConfig) => {
-        if (!this.isInitialized && typeof window !== 'undefined') {
-          await this.initializeCache();
-        }
+  // --- Token state -----------------------------------------------------------
 
-        if (this.cachedTokens?.access) {
-          config.headers.Authorization = `Bearer ${this.cachedTokens.access}`;
-        }
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
-
-    // Response interceptor
-    this.client.interceptors.response.use(
-      (response: AxiosResponse) => response,
-      async (error) => {
-        const originalRequest = error.config;
-
-        // Handle network errors
-        if (!error.response) {
-          console.error('Network error:', error.message);
-          return Promise.reject(new Error('Network error. Please check your connection.'));
-        }
-
-        // Handle 401 Unauthorized (token refresh)
-        if (error.response?.status === 401 && !originalRequest._retry) {
-          if (this.isRefreshing) {
-            return new Promise((resolve) => {
-              this.refreshSubscribers.push((token: string) => {
-                originalRequest.headers.Authorization = `Bearer ${token}`;
-                resolve(this.client(originalRequest));
-              });
-            });
-          }
-
-          originalRequest._retry = true;
-          this.isRefreshing = true;
-
-          try {
-            const tokens = await this.refreshToken();
-            if (tokens) {
-              this.onRefreshSuccess(tokens.access);
-              originalRequest.headers.Authorization = `Bearer ${tokens.access}`;
-              return this.client(originalRequest);
-            }
-          } catch (refreshError) {
-            this.onRefreshFailure();
-            return Promise.reject(refreshError);
-          }
-        }
-
-        // Handle other common HTTP errors
-        if (error.response?.status >= 500) {
-          console.error('Server error:', error.response.data);
-          return Promise.reject(new Error('Server error. Please try again later.'));
-        }
-
-        if (error.response?.status === 404) {
-          console.error('Resource not found:', error.config?.url);
-          return Promise.reject(new Error('Requested resource not found.'));
-        }
-
-        if (error.response?.status === 403) {
-          console.error('Forbidden:', error.response.data);
-          return Promise.reject(new Error('You do not have permission to perform this action.'));
-        }
-
-        if (error.response?.status === 400) {
-          return Promise.reject(error);
-        }
-
-        return Promise.reject(error);
-      }
-    );
+  private dropCachedTokens(): void {
+    this.authEpoch++;
+    this.cachedTokens = null;
   }
 
-  // --- VAULT SYNC METHODS ---
+  /** Reads tokens from the encrypted vault (deduplicated). Never throws. */
+  private loadTokensFromVault(): Promise<AuthTokens | null> {
+    if (typeof window === 'undefined') return Promise.resolve(null);
+    if (this.loadPromise) return this.loadPromise;
+
+    const epoch = this.authEpoch;
+    this.loadPromise = retrieveAndDecrypt<AuthTokens>(AUTH_TOKEN_KEY)
+      .catch((error) => {
+        console.error('[APIClient] Error reading tokens from vault:', error);
+        return null;
+      })
+      .then((tokens) => {
+        if (tokens?.access && epoch === this.authEpoch) this.cachedTokens = tokens;
+        return tokens?.access ? tokens : null;
+      })
+      .finally(() => {
+        this.loadPromise = null;
+      });
+
+    return this.loadPromise;
+  }
+
+  /** Current access token; falls back to the vault if this tab has nothing cached yet. */
+  public async getAccessToken(): Promise<string | null> {
+    const tokens = this.cachedTokens ?? (await this.loadTokensFromVault());
+    return tokens?.access ?? null;
+  }
+
   public async setTokens(tokens: AuthTokens | null): Promise<void> {
+    this.authEpoch++;
     this.cachedTokens = tokens;
     if (typeof window === 'undefined') return;
 
@@ -154,116 +147,205 @@ class APIClient {
     }
   }
 
-  private async refreshToken(): Promise<AuthTokens | null> {
-    if (!this.cachedTokens?.refresh) {
-      await this.logoutUser();
+  // --- Interceptors (shared with other service clients, e.g. notify.ts) -------
+
+  /**
+   * Installs bearer-token + refresh handling on any axios instance, so every service
+   * client shares ONE token state and ONE refresh flow.
+   */
+  public attachAuthInterceptors(instance: AxiosInstance): void {
+    instance.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+      if (isAuthEndpoint(config.url)) return config;
+
+      let token = await this.getAccessToken();
+
+      // Refresh proactively instead of burning a round-trip on a guaranteed 401.
+      if (token && isJwtExpired(token)) {
+        const refreshed = await this.refreshAccessToken(token);
+        token = refreshed?.access ?? token;
+      }
+
+      if (token) config.headers.Authorization = `Bearer ${token}`;
+      return config;
+    });
+
+    instance.interceptors.response.use(
+      (response: AxiosResponse) => response,
+      async (error: AxiosError) => {
+        if (axios.isCancel(error)) return Promise.reject(error);
+
+        const original = error.config as RetriableConfig | undefined;
+
+        if (!error.response) {
+          if (error.code === 'ECONNABORTED') {
+            console.error('Request timed out:', original?.url);
+            return Promise.reject(withMessage(error, 'The request timed out. Please try again.'));
+          }
+          console.error('Network error:', error.message);
+          return Promise.reject(withMessage(error, 'Network error. Please check your connection.'));
+        }
+
+        const status = error.response.status;
+
+        if (status === 401 && original && !original._retry && !isAuthEndpoint(original.url)) {
+          original._retry = true;
+          const tokens = await this.refreshAccessToken(bearerFrom(original.headers?.Authorization));
+          if (tokens?.access) {
+            original.headers.Authorization = `Bearer ${tokens.access}`;
+            return instance(original);
+          }
+          return Promise.reject(withMessage(error, 'Your session has expired. Please log in again.'));
+        }
+
+        if (status >= 500) {
+          console.error(
+            `Server error ${status} on ${original?.method?.toUpperCase()} ${original?.baseURL ?? ''}${original?.url ?? ''}:`,
+            error.response.data
+          );
+          return Promise.reject(withMessage(error, 'Server error. Please try again later.'));
+        }
+
+        if (status === 404) {
+          console.error('Resource not found:', original?.url);
+          return Promise.reject(withMessage(error, 'Requested resource not found.'));
+        }
+
+        if (status === 403) {
+          console.error('Forbidden:', error.response.data);
+          return Promise.reject(withMessage(error, 'You do not have permission to perform this action.'));
+        }
+
+        // 400 and everything else: pass through untouched (callers read response.data).
+        return Promise.reject(error);
+      }
+    );
+  }
+
+  // --- Refresh -----------------------------------------------------------------
+
+  /**
+   * Single-flight refresh. Concurrent callers in this tab share one promise; across tabs a
+   * Web Lock serialises refreshes so a rotated refresh token is never replayed.
+   * Resolves to null (never rejects) when no valid session can be obtained.
+   */
+  public refreshAccessToken(failedAccessToken: string | null = null): Promise<AuthTokens | null> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.withRefreshLock(() => this.performRefresh(failedAccessToken)).finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
+
+  private withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+    if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+      return navigator.locks.request(REFRESH_LOCK_NAME, fn) as Promise<T>;
+    }
+    return fn();
+  }
+
+  private async performRefresh(failedAccessToken: string | null): Promise<AuthTokens | null> {
+    // Another tab (or an earlier call) may have refreshed already — reuse its tokens.
+    const stored = await this.loadTokensFromVault();
+    if (stored?.access && stored.access !== failedAccessToken && !isJwtExpired(stored.access)) {
+      return stored;
+    }
+
+    const refresh = stored?.refresh ?? this.cachedTokens?.refresh;
+    if (!refresh) {
+      // Nothing to refresh with: this tab simply isn't logged in. Don't wipe other tabs.
+      this.redirectToLogin();
       return null;
     }
 
     try {
-      const response = await axios.post(`${getBaseUrl()}/token/refresh/`, {
-        refresh: this.cachedTokens.refresh,
-      });
+      const { data } = await axios.post(
+        `${getBaseUrl()}/token/refresh/`,
+        { refresh },
+        { timeout: REFRESH_TIMEOUT_MS }
+      );
 
-      // Capture new session seed if returned on refresh
-      if (response.data?.session_seed) {
-        setSessionSeed(response.data.session_seed);
+      if (data?.session_seed && data.session_seed !== getSessionSeed()) {
+        await rotateSessionSeed(data.session_seed); // re-encrypts user_details etc.
       }
 
-      const newTokens: AuthTokens = {
-        access: response.data.access,
-        refresh: response.data.refresh || this.cachedTokens.refresh,
-      };
-
-      await this.setTokens(newTokens);
-      return newTokens;
-    } catch (error) {
-      console.error('Token refresh failed:', error);
-      await this.logoutUser();
-      throw error;
-    }
-  }
-
-  private onRefreshSuccess(token: string) {
-    this.refreshSubscribers.forEach((callback) => callback(token));
-    this.refreshSubscribers = [];
-    this.isRefreshing = false;
-  }
-
-  private onRefreshFailure() {
-    this.refreshSubscribers = [];
-    this.isRefreshing = false;
-    this.logoutUser();
-  }
-
-  // Public logout routine that purges vault data
-  public async logoutUser(): Promise<void> {
-    if (typeof window === 'undefined') return;
-
-    try {
-      // 1. Instantly clear in-memory tokens and active security session
-      clearSecuritySession();
-      this.cachedTokens = null;
-
-      // 2. Purge client-side persistent vault storage (IndexedDB / LocalStorage)
-      await Promise.all([
-        removeFromDataStore(AUTH_TOKEN_KEY),
-        removeFromDataStore(USER_KEY),
-        removeFromDataStore(USER_DETAILS_KEY),
-      ]);
-
-      // Redirect to login page
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
-    } catch (error) {
-      console.error('Error during logout:', error);
-    }
-  }
-
-  // Public methods
-  public async login(username: string, password: string): Promise<AuthTokens> {
-    try {
-      const response = await this.client.post('/token/', {
-        username,
-        password,
-      });
-
-      // Extract session seed from login response
-      const sessionSeed = response.data?.session_seed || response.data?.user?.session_seed;
-      if (sessionSeed) {
-        setSessionSeed(sessionSeed);
-      }
-
-      const tokens: AuthTokens = {
-        access: response.data.access,
-        refresh: response.data.refresh,
-      };
-
+      const tokens: AuthTokens = { access: data.access, refresh: data.refresh || refresh };
       await this.setTokens(tokens);
       return tokens;
-    } catch (error: any) {
-      if (error.response?.status === 401) {
-        throw new Error('Invalid username or password');
+    } catch (error) {
+      const status = (error as AxiosError).response?.status;
+      if (status === 400 || status === 401) {
+        console.warn('Refresh token rejected; logging out.');
+        await this.logoutUser();
+      } else {
+        // Network blip / 5xx: keep the session, let the caller surface the error.
+        console.error('Token refresh failed:', error);
       }
-      throw error;
+      return null;
     }
   }
 
-  // Request password reset link by sending an email address
+  // --- Session lifecycle -----------------------------------------------------------
+
+  private redirectToLogin(): void {
+    if (typeof window !== 'undefined' && window.location.pathname !== LOGIN_PATH) {
+      window.location.href = LOGIN_PATH;
+    }
+  }
+
+  /** Clears tokens + vault in every tab, then redirects. Safe to call concurrently. */
+  public logoutUser(): Promise<void> {
+    if (typeof window === 'undefined') return Promise.resolve();
+    if (this.logoutPromise) return this.logoutPromise;
+
+    this.logoutPromise = (async () => {
+      this.dropCachedTokens();
+      try {
+        await clearSecuritySession(); // wipes the whole vault (tokens, user, user_details)
+      } catch (error) {
+        console.error('Error during logout cleanup:', error);
+      } finally {
+        this.redirectToLogin();
+      }
+    })().finally(() => {
+      this.logoutPromise = null;
+    });
+
+    return this.logoutPromise;
+  }
+
+  public async login(username: string, password: string): Promise<AuthTokens> {
+    let data: any;
+    try {
+      ({ data } = await this.client.post('/token/', { username, password }));
+    } catch (error: any) {
+      if (error.response?.status === 401) throw new Error('Invalid username or password');
+      throw error;
+    }
+
+    const sessionSeed: string | undefined = data?.session_seed || data?.user?.session_seed;
+    if (sessionSeed) {
+      setSessionSeed(sessionSeed);
+    } else if (!getSessionSeed()) {
+      throw new Error('Login succeeded but the server did not return a session seed.');
+    }
+
+    const tokens: AuthTokens = { access: data.access, refresh: data.refresh };
+    await this.setTokens(tokens);
+    return tokens;
+  }
+
+  // --- Public API methods ----------------------------------------------------------
+
   public async requestPasswordReset(email: string): Promise<{ detail: string }> {
     try {
       const response = await this.client.post<{ detail: string }>('/auth/password/request/', { email });
       return response.data;
     } catch (error: any) {
-      if (error.response?.data) {
-        throw error.response.data;
-      }
-      throw error;
+      throw error.response?.data ?? error;
     }
   }
 
-  // Submit the new password alongside token credentials
   public async confirmPasswordReset(data: Record<string, string>): Promise<{ detail: string }> {
     try {
       const response = await this.client.post<{ detail: string }>('/auth/password/confirm/', {
@@ -273,10 +355,7 @@ class APIClient {
       });
       return response.data;
     } catch (error: any) {
-      if (error.response?.data) {
-        throw error.response.data;
-      }
-      throw error;
+      throw error.response?.data ?? error;
     }
   }
 
@@ -295,32 +374,33 @@ class APIClient {
   }
 
   public async get<T>(url: string, params?: any): Promise<T> {
-    const response = await this.client.get<T>(url, { params });
-    return response.data;
+    return (await this.client.get<T>(url, { params })).data;
   }
 
   public async post<T>(url: string, data?: any): Promise<T> {
-    const response = await this.client.post<T>(url, data);
-    return response.data;
+    return (await this.client.post<T>(url, data)).data;
   }
 
   public async put<T>(url: string, data?: any): Promise<T> {
-    const response = await this.client.put<T>(url, data);
-    return response.data;
+    return (await this.client.put<T>(url, data)).data;
   }
 
   public async patch<T>(url: string, data?: any): Promise<T> {
-    const response = await this.client.patch<T>(url, data);
-    return response.data;
+    return (await this.client.patch<T>(url, data)).data;
   }
 
   public async delete<T>(url: string): Promise<T> {
-    const response = await this.client.delete<T>(url);
-    return response.data;
+    return (await this.client.delete<T>(url)).data;
   }
 
+  /** Synchronous, cache-only check. Prefer `hasSession()` in guards on first render. */
   public isAuthenticated(): boolean {
-    return !!(this.cachedTokens?.access);
+    return !!this.cachedTokens?.access;
+  }
+
+  /** Async check that also consults the vault (works in freshly opened tabs). */
+  public async hasSession(): Promise<boolean> {
+    return (await this.getAccessToken()) !== null;
   }
 
   public getCurrentTokens(): AuthTokens | null {
