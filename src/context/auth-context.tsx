@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, AuthTokens, UserDetailsResponse } from '@/types';
 import { AUTH_TOKEN_KEY, USER_KEY, USER_DETAILS_KEY } from '@/lib/constants';
 import { apiClient } from '@/lib/api';
+import { apiClient as notifyApiClient } from '@/lib/notify';
 import {setSessionSeed,getSessionSeed,clearSecuritySession,encryptAndStore,retrieveAndDecrypt,} from '@/utils/sec';
 
 interface ExtendedAuthTokens extends AuthTokens {
@@ -40,6 +41,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (typeof (apiClient as any).setTokens === 'function') {
       await (apiClient as any).setTokens(null);
+    }
+    if (typeof (notifyApiClient as any).setTokens === 'function') {
+      await (notifyApiClient as any).setTokens(null);
     }
   };
 
@@ -78,6 +82,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (typeof (apiClient as any).setTokens === 'function') {
             await (apiClient as any).setTokens(storedTokens);
           }
+          if (typeof (notifyApiClient as any).setTokens === 'function') {
+            await (notifyApiClient as any).setTokens(storedTokens);
+          }
           setUserDetails(storedUserDetails);
           setUser(storedUserDetails.user);
         } else {
@@ -110,6 +117,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (typeof (apiClient as any).setTokens === 'function') {
       await (apiClient as any).setTokens(tokens);
     }
+    if (typeof (notifyApiClient as any).setTokens === 'function') {
+      await (notifyApiClient as any).setTokens(tokens);
+    }
 
     // 3. Construct backward-compatible simplified user object
     const simplifiedUser = {
@@ -120,7 +130,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     // 4. Encrypt and persist tokens, user details, and simplified user profile to IndexedDB
-    await Promise.all([encryptAndStore(AUTH_TOKEN_KEY, tokens),encryptAndStore(USER_DETAILS_KEY, userDetailsData),encryptAndStore(USER_KEY, simplifiedUser),]);
+    await Promise.all([encryptAndStore(USER_DETAILS_KEY, userDetailsData),encryptAndStore(USER_KEY, simplifiedUser),]);
+
     // 5. Update component state
     setUserDetails(userDetailsData);
     setUser(userDetailsData.user);
@@ -129,14 +140,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       // Direct call to apiClient.logoutUser() to hit server endpoint
-      await apiClient.logoutUser();
+      if (typeof (apiClient as any).logoutUser === 'function') {
+        await (apiClient as any).logoutUser();
+      } else if (typeof (notifyApiClient as any).logoutUser === 'function') {
+        await (notifyApiClient as any).logoutUser();
+      }
     } catch (error) {
       console.error('[AuthContext] Logout endpoint error:', error);
     } finally {
       await clearAuthStorage();
       setUser(null);
       setUserDetails(null);
-      window.location.href = '/login';
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
   };
 
