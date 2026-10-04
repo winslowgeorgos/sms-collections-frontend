@@ -58,7 +58,13 @@ import {
 interface OfficerPerformanceFilters {
   startDate: string;
   endDate: string;
-  period: 'today' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
+  period:
+    | 'today'
+    | 'week' | 'last_week'
+    | 'month' | 'last_month'
+    | 'quarter' | 'last_quarter'
+    | 'year' | 'last_year'
+    | 'custom';
   officerId: string;
 }
 
@@ -634,7 +640,7 @@ const InfoHint = ({ text }: { text: string }) => (
 );
 
 // ============================================================================
-// PR BUCKET (CBK LOAN-AGING CATEGORIZATION) COMPONENTS
+// Age BUCKET (CBK LOAN-AGING CATEGORIZATION) COMPONENTS
 // ----------------------------------------------------------------------------
 // Shared, reusable presentation for the `pr_bucket_metrics` block returned by
 // the dashboard / current-month / current-week / officer-performance endpoints
@@ -642,11 +648,73 @@ const InfoHint = ({ text }: { text: string }) => (
 // endpoint (PRBucketTrendMetrics — a single target/posted/commission per period).
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// PERCENTAGED PERFORMANCE RATE
+// (amount posted this month / monthly percentaged target) * 100 -- computed and
+// stored by the backend on OfficerDailyMetrics, returned as
+// `pr_bucket_metrics.percentaged_performance_rate` (and per bucket inside
+// `pr_bucket_breakdown`). Not yet part of the shared PRBucketMetrics type in
+// '@/types', so it's read through this small helper.
+// ----------------------------------------------------------------------------
+
+type WithPerformanceRate = { percentaged_performance_rate?: number | null };
+
+/** The backend-provided percentaged performance rate, or undefined if the payload doesn't carry one. */
+const getPerformanceRate = (source: unknown): number | undefined => {
+  const value = (source as WithPerformanceRate | null | undefined)?.percentaged_performance_rate;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+};
+
+/**
+ * Rate to display, or undefined when there's no percentaged target to measure against
+ * (a 0% against a 0 target would read as failure, so those render as "—" instead).
+ */
+const getDisplayPerformanceRate = (source: unknown, target: number | null | undefined): number | undefined =>
+  (target || 0) > 0 ? getPerformanceRate(source) : undefined;
+
+/** Same thresholds as the existing Monthly Rate / Fulfillment Rate pills (70% / 40%). */
+const performanceRateTone = (rate: number) =>
+  rate >= 70
+    ? { pill: 'bg-green-100 text-green-800', bar: 'bg-green-500' }
+    : rate >= 40
+      ? { pill: 'bg-yellow-100 text-yellow-800', bar: 'bg-yellow-500' }
+      : { pill: 'bg-red-100 text-red-800', bar: 'bg-red-500' };
+
+/** Colored % pill with an optional thin progress bar (capped visually at 100%). */
+const PerformanceRateBadge = ({
+  rate,
+  showBar = false,
+  size = 'sm',
+}: {
+  rate: number;
+  showBar?: boolean;
+  size?: 'xs' | 'sm';
+}) => {
+  const tone = performanceRateTone(rate);
+  return (
+    <div className="inline-flex flex-col items-end gap-1">
+      <span
+        className={`rounded-full font-medium ${tone.pill} ${size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-1 text-xs'}`}
+        title="Percentaged performance rate = amount posted this month ÷ monthly percentaged target × 100"
+      >
+        {rate.toFixed(1)}%
+      </span>
+      {showBar && (
+        <div className="h-1 w-16 overflow-hidden rounded-full bg-gray-200" aria-hidden="true">
+          <div className={`h-full ${tone.bar}`} style={{ width: `${Math.min(Math.max(rate, 0), 100)}%` }} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 /** A single target-vs-posted row rendered inside a bucket mini card (e.g. "Daily" or "Monthly", or a single period row for trend data). */
 interface PRBucketCardRow {
   label: string;
   target: number;
   posted: number;
+  /** Backend-provided rate for this row; when set it's shown instead of a locally computed %. */
+  rate?: number;
 }
 
 const PRBucketStat = ({
@@ -668,11 +736,13 @@ const PRBucketMiniCard = ({
   bucket,
   rows,
   commission,
+  performanceRate,
   formatCurrency,
 }: {
   bucket: PRBucketValue | string;
   rows: PRBucketCardRow[];
   commission?: number;
+  performanceRate?: number;
   formatCurrency: (value: number) => string;
 }) => {
   const meta = getPRBucketMeta(bucket);
@@ -680,13 +750,17 @@ const PRBucketMiniCard = ({
 
   return (
     <div className={`rounded-xl border ${colors.border} ${colors.bg} p-3`}>
-      <div className="flex items-center gap-1.5 mb-2">
-        <span className={`h-2 w-2 rounded-full ${colors.dot}`} />
-        <span className={`text-xs font-semibold ${colors.text}`}>{meta.shortLabel}</span>
+      <div className="flex items-center justify-between gap-1.5 mb-2">
+        <div className="flex items-center gap-1.5">
+          <span className={`h-2 w-2 rounded-full ${colors.dot}`} />
+          <span className={`text-xs font-semibold ${colors.text}`}>{meta.shortLabel}</span>
+        </div>
+        {typeof performanceRate === 'number' && <PerformanceRateBadge rate={performanceRate} size="xs" />}
       </div>
       <div className="space-y-1.5">
         {rows.map((row) => {
-          const achievement = row.target > 0 ? (row.posted / row.target) * 100 : 0;
+          const achievement =
+            typeof row.rate === 'number' ? row.rate : row.target > 0 ? (row.posted / row.target) * 100 : 0;
           return (
             <div key={row.label}>
               <div className="flex items-center justify-between text-[10px] text-gray-500">
@@ -726,7 +800,9 @@ const PRBucketDots = ({ metrics }: { metrics?: PRBucketMetrics | null }) => {
         return (
           <span
             key={b}
-            title={`${meta.label}: ${entry.monthly_posted.toLocaleString()} posted / ${entry.monthly_target.toLocaleString()} target`}
+            title={`${meta.label}: ${entry.monthly_posted.toLocaleString()} posted / ${entry.monthly_target.toLocaleString()} target${
+              typeof getPerformanceRate(entry) === 'number' ? ` (${getPerformanceRate(entry)!.toFixed(1)}%)` : ''
+            }`}
             className={`h-2.5 w-2.5 rounded-full ${colors.dot} ring-2 ring-white`}
           />
         );
@@ -766,6 +842,7 @@ const PRBucketBreakdownGrid = ({
   compact?: boolean;
 }) => {
   const buckets = PR_BUCKET_ORDER.filter((b) => !!metrics.pr_bucket_breakdown?.[b]);
+  const performanceRate = getDisplayPerformanceRate(metrics, metrics.monthly_percentaged_target);
 
   return (
     <div className="space-y-3">
@@ -776,28 +853,45 @@ const PRBucketBreakdownGrid = ({
         </div>
       )}
 
-      <div className={`grid grid-cols-2 ${compact ? 'sm:grid-cols-3' : 'sm:grid-cols-3 lg:grid-cols-6'} gap-2`}>
+      <div
+        className={`grid grid-cols-2 ${
+          compact
+            ? 'sm:grid-cols-3'
+            : typeof performanceRate === 'number'
+              ? 'sm:grid-cols-4 lg:grid-cols-7'
+              : 'sm:grid-cols-3 lg:grid-cols-6'
+        } gap-2`}
+      >
         <PRBucketStat label="Daily Target" value={formatCurrency(metrics.daily_percentaged_target)} />
         <PRBucketStat label="Daily Posted" value={formatCurrency(metrics.daily_posted)} accent="text-green-600" />
         <PRBucketStat label="Daily Commission" value={formatCurrency(metrics.daily_commission)} accent="text-purple-600" />
         <PRBucketStat label="Monthly Target" value={formatCurrency(metrics.monthly_percentaged_target)} />
         <PRBucketStat label="Monthly Posted" value={formatCurrency(metrics.monthly_posted)} accent="text-green-600" />
         <PRBucketStat label="Monthly Commission" value={formatCurrency(metrics.monthly_commission)} accent="text-purple-600" />
+        {typeof performanceRate === 'number' && (
+          <PRBucketStat
+            label="Performance Rate"
+            value={`${performanceRate.toFixed(1)}%`}
+            accent={performanceRate >= 70 ? 'text-green-600' : performanceRate >= 40 ? 'text-yellow-600' : 'text-red-600'}
+          />
+        )}
       </div>
 
       {buckets.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           {buckets.map((b) => {
             const entry = metrics.pr_bucket_breakdown[b]!;
+            const bucketRate = getDisplayPerformanceRate(entry, entry.monthly_target);
             return (
               <PRBucketMiniCard
                 key={b}
                 bucket={b}
                 formatCurrency={formatCurrency}
                 commission={(entry.daily_commission || 0) > 0 ? entry.daily_commission : entry.monthly_commission}
+                performanceRate={bucketRate}
                 rows={[
                   { label: 'Daily', target: entry.daily_target, posted: entry.daily_posted },
-                  { label: 'Monthly', target: entry.monthly_target, posted: entry.monthly_posted },
+                  { label: 'Monthly', target: entry.monthly_target, posted: entry.monthly_posted, rate: bucketRate },
                 ]}
               />
             );
@@ -903,10 +997,18 @@ const OfficerPerformanceFilters = ({
             className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md"
           >
             <option value="today">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-            <option value="quarter">This Quarter</option>
-            <option value="year">This Year</option>
+            <optgroup label="Current">
+              <option value="week">This Week</option>
+              <option value="month">This Month</option>
+              <option value="quarter">This Quarter</option>
+              <option value="year">This Year</option>
+            </optgroup>
+            <optgroup label="Previous">
+              <option value="last_week">Last Week</option>
+              <option value="last_month">Last Month</option>
+              <option value="last_quarter">Last Quarter</option>
+              <option value="last_year">Last Year</option>
+            </optgroup>
             <option value="custom">Custom Range</option>
           </select>
         </div>
@@ -1019,6 +1121,23 @@ const OfficerDetailModal = ({
               <p className="text-xs text-gray-500">Collection Rate (Monthly)</p>
               <p className="text-lg font-bold text-purple-700">{formatPercent(metrics.collection_rate_vs_monthly_target)}</p>
             </div>
+            {typeof getDisplayPerformanceRate(metrics.pr_bucket_metrics, metrics.pr_bucket_metrics?.monthly_percentaged_target) === 'number' && (
+              <div className="bg-indigo-50 p-2 rounded col-span-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-gray-500">Age Percentaged Performance Rate</p>
+                    <p className="text-lg font-bold text-indigo-700">
+                      {formatPercent(getPerformanceRate(metrics.pr_bucket_metrics)!)}
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      {formatCurrency(metrics.pr_bucket_metrics?.monthly_posted || 0)} posted of{' '}
+                      {formatCurrency(metrics.pr_bucket_metrics?.monthly_percentaged_target || 0)} Age target
+                    </p>
+                  </div>
+                  <PerformanceRateBadge rate={getPerformanceRate(metrics.pr_bucket_metrics)!} showBar />
+                </div>
+              </div>
+            )}
           </div>
         </div>
         
@@ -1082,12 +1201,12 @@ const OfficerDetailModal = ({
           </div>
         </div>
 
-        {/* PR Bucket Breakdown */}
+        {/* Age Bucket Breakdown */}
         {metrics.pr_bucket_metrics && (
           <div>
             <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center">
               <Layers size={14} className="mr-1.5 text-gray-400" />
-              PR Bucket Performance
+              Age Bucket Performance
             </h4>
             <PRBucketBreakdownGrid
               metrics={metrics.pr_bucket_metrics as PRBucketMetrics}
@@ -1139,13 +1258,13 @@ export default function AdminAnalyticsDashboard() {
   const [officerExporting, setOfficerExporting] = useState(false);
   const [selectedOfficerDetail, setSelectedOfficerDetail] = useState<OfficerDetailModalData | null>(null);
   const [isOfficerDetailModalOpen, setIsOfficerDetailModalOpen] = useState(false);
-  // Row-level expansion for the PR Bucket breakdown in the Officer Performance table
+  // Row-level expansion for the Age Bucket breakdown in the Officer Performance table
   const [expandedOfficerRows, setExpandedOfficerRows] = useState<Record<number, boolean>>({});
   const toggleOfficerRowExpanded = (officerId: number) => {
     setExpandedOfficerRows((prev) => ({ ...prev, [officerId]: !prev[officerId] }));
   };
 
-  // PR Bucket Performance Trends state (Performance Trends tab)
+  // Age Bucket Performance Trends state (Performance Trends tab)
   const [trendGranularity, setTrendGranularity] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
   const [expandedTrendPeriods, setExpandedTrendPeriods] = useState<Record<string, boolean>>({});
   
@@ -1237,7 +1356,7 @@ export default function AdminAnalyticsDashboard() {
   // HELPER FUNCTIONS
   // ============================================================================
 
-  const formatCurrency = (value: number) => `KSh ${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const formatCurrency = (value: number) => `${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   const formatNumber = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   const formatPercent = (value: number) => `${value.toFixed(1)}%`;
   const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString();
@@ -2491,7 +2610,7 @@ export default function AdminAnalyticsDashboard() {
             </Card>
           </div>
 
-          {/* PR Bucket Performance (CBK Loan-Aging Categorization) */}
+          {/* Age Bucket Performance (CBK Loan-Aging Categorization) */}
           {dashboardData?.pr_bucket_metrics && (
             <Card className="rounded-xl border border-gray-100 shadow-sm">
               <CardHeader>
@@ -2499,7 +2618,7 @@ export default function AdminAnalyticsDashboard() {
                   <div>
                     <h2 className="flex items-center text-lg font-semibold text-gray-900">
                       <Layers className="mr-2 h-5 w-5 text-indigo-600" />
-                      PR Bucket Performance
+                      Age Bucket Performance
                     </h2>
                     <p className="mt-1 text-xs text-gray-500">
                       Today's CBK loan-aging categorization snapshot — targets, posted amounts and commission by bucket.
@@ -2636,16 +2755,16 @@ export default function AdminAnalyticsDashboard() {
                       </div>
                     </div>
 
-                    {currentMonthMetrics.pr_bucket_metrics && (
+                    {/* {currentMonthMetrics.pr_bucket_metrics && (
                       <div className="border-t border-gray-100 pt-3">
                         <PRBucketBreakdownGrid
                           metrics={currentMonthMetrics.pr_bucket_metrics}
                           formatCurrency={formatCurrency}
-                          title="PR Bucket Breakdown (Month)"
+                          title="Age Bucket Breakdown (Month)"
                           compact
                         />
                       </div>
-                    )}
+                    )} */}
                   </div>
                 </CardContent>
               </Card>
@@ -2766,16 +2885,16 @@ export default function AdminAnalyticsDashboard() {
                       <span className="text-gray-500">Collected MTD: {formatCurrency(currentWeekMetrics.month_context.collected_mtd)}</span>
                     </div>
 
-                    {currentWeekMetrics.pr_bucket_metrics && (
+                    {/* {currentWeekMetrics.pr_bucket_metrics && (
                       <div className="border-t border-gray-100 pt-3">
                         <PRBucketBreakdownGrid
                           metrics={currentWeekMetrics.pr_bucket_metrics}
                           formatCurrency={formatCurrency}
-                          title="PR Bucket Breakdown (Week)"
+                          title="Age Bucket Breakdown (Week)"
                           compact
                         />
                       </div>
-                    )}
+                    )} */}
                   </div>
                 </CardContent>
               </Card>
@@ -2840,7 +2959,7 @@ export default function AdminAnalyticsDashboard() {
             ) : filteredOfficerData && filteredOfficerData.length > 0 ? (
               <>
                 {/* Summary Stats Row */}
-                <div className="grid grid-cols-2 md:grid-cols-5 xl:grid-cols-10 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-11 gap-3">
                   <div className="bg-gray-50 p-3 rounded-lg text-center">
                     <p className="text-xs text-gray-500">Total Officers</p>
                     <p className="text-xl font-bold">{filteredOfficerData.length}</p>
@@ -2853,21 +2972,39 @@ export default function AdminAnalyticsDashboard() {
                   </div>
                   <div className="bg-blue-50 p-3 rounded-lg text-center">
                     <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
-                      PR % Target (Mo.)
-                      <InfoHint text="Sum of each officer's monthly percentaged target across all PR buckets" />
+                      Age % Target (Mo.)
+                      <InfoHint text="Sum of each officer's monthly percentaged target across all Age buckets" />
                     </p>
                     <p className="text-xl font-bold text-blue-700">
                       {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_percentaged_target || 0), 0))}
                     </p>
                   </div>
                   <div className="bg-green-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">PR Posted (Mo.)</p>
+                    <p className="text-xs text-gray-500">Age Posted (Mo.)</p>
                     <p className="text-xl font-bold text-green-700">
                       {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_posted || 0), 0))}
                     </p>
                   </div>
+                  {(() => {
+                    // Team rate is weighted (total posted / total target), not an average of officer rates,
+                    // so officers with larger Age targets count proportionally more.
+                    const teamTarget = filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_percentaged_target || 0), 0);
+                    const teamPosted = filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_posted || 0), 0);
+                    const teamRate = teamTarget > 0 ? (teamPosted / teamTarget) * 100 : 0;
+                    return (
+                      <div className="bg-indigo-50 p-3 rounded-lg text-center">
+                        <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
+                          Age Perf. Rate (Mo.)
+                          <InfoHint text="Team percentaged performance rate: total Age posted ÷ total Age % target × 100" />
+                        </p>
+                        <p className={`text-xl font-bold ${teamTarget <= 0 ? 'text-gray-400' : teamRate >= 70 ? 'text-green-700' : teamRate >= 40 ? 'text-yellow-700' : 'text-red-700'}`}>
+                          {teamTarget > 0 ? formatPercent(teamRate) : '—'}
+                        </p>
+                      </div>
+                    );
+                  })()}
                   <div className="bg-purple-50 p-3 rounded-lg text-center">
-                    <p className="text-xs text-gray-500">PR Commission (Mo.)</p>
+                    <p className="text-xs text-gray-500">Age Commission (Mo.)</p>
                     <p className="text-xl font-bold text-purple-700">
                       {formatCurrency(filteredOfficerData.reduce((sum, o) => sum + (o.metrics.pr_bucket_metrics?.monthly_commission || 0), 0))}
                     </p>
@@ -2924,15 +3061,21 @@ export default function AdminAnalyticsDashboard() {
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Monthly Balance</th>
                             <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">
                               <span className="inline-flex items-center gap-1">
-                                PR % Target
-                                <InfoHint text="Monthly percentaged target from CBK PR bucket configuration (target % × cumulative balance, by bucket)" />
+                                Age % Target
+                                <InfoHint text="Monthly percentaged target from CBK Age bucket configuration (target % × cumulative balance, by bucket)" />
                               </span>
                             </th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">PR Posted</th>
-                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">PR Commission</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Age Posted</th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">
+                              <span className="inline-flex items-center gap-1">
+                                Age Perf. Rate
+                                <InfoHint text="Percentaged performance rate: Age posted this month ÷ monthly Age % target × 100" />
+                              </span>
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Age Commission</th>
                             <th className="text-center py-3 px-4 text-sm font-semibold text-gray-700">
                               <span className="inline-flex items-center gap-1">
-                                PR Buckets
+                                Age Buckets
                                 <InfoHint text="Current / 1-30 / 31-60 / 61-90 / 90+ day buckets with activity this month. Click to expand full breakdown." />
                               </span>
                             </th>
@@ -2987,6 +3130,19 @@ export default function AdminAnalyticsDashboard() {
                               <td className="text-right py-3 px-4 text-green-600 font-medium">
                                 {formatCurrency(officer.metrics.pr_bucket_metrics?.monthly_posted || 0)}
                               </td>
+                              <td className="text-right py-3 px-4">
+                                {(() => {
+                                  const rate = getDisplayPerformanceRate(
+                                    officer.metrics.pr_bucket_metrics,
+                                    officer.metrics.pr_bucket_metrics?.monthly_percentaged_target
+                                  );
+                                  return typeof rate === 'number' ? (
+                                    <PerformanceRateBadge rate={rate} showBar />
+                                  ) : (
+                                    <span className="text-xs text-gray-300" title="No Age percentaged target for this period">—</span>
+                                  );
+                                })()}
+                              </td>
                               <td className="text-right py-3 px-4 text-purple-600 font-medium">
                                 {formatCurrency(officer.metrics.pr_bucket_metrics?.monthly_commission || 0)}
                               </td>
@@ -2994,7 +3150,7 @@ export default function AdminAnalyticsDashboard() {
                                 <button
                                   onClick={() => toggleOfficerRowExpanded(officer.officer.id)}
                                   className="inline-flex items-center gap-1.5 hover:bg-gray-100 rounded px-1.5 py-1"
-                                  title="Show PR bucket breakdown"
+                                  title="Show Age bucket breakdown"
                                 >
                                   <PRBucketDots metrics={officer.metrics.pr_bucket_metrics} />
                                   {expandedOfficerRows[officer.officer.id] ? (
@@ -3064,11 +3220,11 @@ export default function AdminAnalyticsDashboard() {
                             </tr>
                             {expandedOfficerRows[officer.officer.id] && officer.metrics.pr_bucket_metrics && (
                               <tr className="border-b border-gray-100 bg-gray-50/60">
-                                <td colSpan={15} className="px-4 py-4">
+                                <td colSpan={16} className="px-4 py-4">
                                   <PRBucketBreakdownGrid
                                     metrics={officer.metrics.pr_bucket_metrics}
                                     formatCurrency={formatCurrency}
-                                    title={`${officer.officer.full_name || officer.officer.username} — PR Bucket Breakdown`}
+                                    title={`${officer.officer.full_name || officer.officer.username} — Age Bucket Breakdown`}
                                     compact
                                   />
                                 </td>
@@ -3270,14 +3426,14 @@ export default function AdminAnalyticsDashboard() {
             </CardContent>
           </Card>
 
-          {/* PR Bucket Performance Trends */}
+          {/* Age Bucket Performance Trends */}
           <Card className="rounded-xl border border-gray-100 shadow-sm">
             <CardHeader>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="flex items-center text-lg font-semibold text-gray-900">
                     <Layers className="mr-2 h-5 w-5 text-indigo-600" />
-                    PR Bucket Performance Trends
+                    Age Bucket Performance Trends
                   </h2>
                   <p className="mt-1 text-xs text-gray-500">
                     CBK loan-aging categorization by period. Click a row to expand its bucket-level breakdown.

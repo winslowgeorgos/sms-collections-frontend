@@ -115,6 +115,15 @@ const PR_BUCKETS = [
   { value: 'PR90_PLUS', label: '90+ Days', fullLabel: 'Above 90 Days', icon: Flag, color: 'rose' },
 ];
 
+// Helper: resolve a readable officer name.
+// Used by both the table cell and the table's built-in export, so the export
+// gets a plain string instead of the officer object (which exported blank).
+const getOfficerName = (officer: any): string => {
+  if (!officer) return 'Unassigned';
+  const fullName = [officer.first_name, officer.last_name].filter(Boolean).join(' ').trim();
+  return fullName || officer.full_name || officer.username || `Officer ${officer.id}`;
+};
+
 export default function LoansPage() {
   const router = useRouter();
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -596,14 +605,13 @@ export default function LoansPage() {
     {
       id: 'current_assigned_officer_details',
       label: 'Assigned Officer',
-      accessor: (row: Loan) => row.current_assigned_officer_details,
-      Cell: (value: any) => {
-        if (!value) return <span className="text-gray-400 text-sm">Unassigned</span>;
-        return (
-          <span className="text-sm">
-            {value.username || `Officer ${value.id}`}
-          </span>
-        );
+      // Return a string (not the officer object) so the export shows the officer's name
+      accessor: (row: Loan) => getOfficerName(row.current_assigned_officer_details),
+      Cell: (value: string, row: Loan) => {
+        if (!row.current_assigned_officer_details) {
+          return <span className="text-gray-400 text-sm">Unassigned</span>;
+        }
+        return <span className="text-sm">{value}</span>;
       },
       width: 130,
     },
@@ -617,8 +625,13 @@ export default function LoansPage() {
     {
       id: 'to_repossess',
       label: 'Repossession',
-      accessor: (row: Loan) => row.to_repossess,
-      Cell: (value: boolean, row: Loan) => {
+      // Readable text for export instead of TRUE/FALSE
+      accessor: (row: Loan) => {
+        if (row.to_repossess) return 'Marked';
+        if (row.actual_repossessed) return 'Repossessed';
+        return '-';
+      },
+      Cell: (value: string, row: Loan) => {
         if (row.to_repossess) {
           return (
             <Badge variant="error" className="gap-1 bg-red-100 text-red-800 border-red-200">
@@ -655,9 +668,11 @@ export default function LoansPage() {
       sortable: true,
     },
     {
-      id: 'loan_percentaged_target',
+      // Unique id (was a duplicate 'loan_percentaged_target', which collided with the Target column)
+      id: 'target_commission',
       label: 'Target / Commission',
-      accessor: (row: Loan) => row.loan_percentaged_target,
+      accessor: (row: Loan) =>
+        `Target: ${formatCurrency2dp(row.loan_percentaged_target)} | Commission: ${formatCurrency2dp(row.loan_commission)}`,
       Cell: (value: string, row: Loan) => (
         <div className="text-sm">
           <div>
@@ -671,7 +686,6 @@ export default function LoansPage() {
         </div>
       ),
       width: 190,
-      sortable: true,
     },
     //separate target/commission into two columns for better visibility
     {
@@ -681,6 +695,8 @@ export default function LoansPage() {
       Cell: (value: string) => (
         <span className="font-medium">{formatCurrency2dp(value)}</span>
       ),
+      width: 130,
+      sortable: true,
     },
     {
       id: 'loan_commission',
@@ -689,6 +705,8 @@ export default function LoansPage() {
       Cell: (value: string) => (
         <span className="font-medium text-emerald-700">{formatCurrency2dp(value)}</span>
       ),
+      width: 130,
+      sortable: true,
     },
     {
       id: 'total_repayments',
@@ -734,11 +752,12 @@ export default function LoansPage() {
     {
       id: 'actions',
       label: 'Actions',
-      accessor: (row: Loan) => row,
-      Cell: (value: Loan) => (
+      // Empty string for export; the cell reads the loan from `row`
+      accessor: (row: Loan) => '',
+      Cell: (value: string, row: Loan) => (
         <div className="flex space-x-2">
           <button
-            onClick={() => handleViewLoanDetails(value.loan_id)}
+            onClick={() => handleViewLoanDetails(row.loan_id)}
             className="text-blue-600 hover:text-blue-700 transition-colors p-1 rounded hover:bg-blue-50"
             title="View loan details"
           >

@@ -3,6 +3,13 @@
 // "All Installments" (/installments) and "My Installments" (/my_installments)
 // pages. Kept in one place so both pages stay in sync with the
 // InstallmentDetailSerializer / InstallmentViewSet contract.
+//
+// PR BUCKETS -- LIVE vs STATIC MONTHLY
+//   pr_bucket                -> LIVE bucket, recalculated daily as the installment ages.
+//   static_monthly_pr_bucket -> captured at the first update of the month and frozen
+//                               until next month. Target, posted and commission for the
+//                               month are all calculated against THIS bucket, and the
+//                               backend's pr_bucket_summary is grouped by it.
 'use client';
 
 import React from 'react';
@@ -94,14 +101,22 @@ export interface Installment {
   created_at: string;
   updated_at: string;
   actual_installment_due_days: number;
+  /** LIVE bucket -- moves daily as the installment ages. */
   pr_bucket: string | null;
+  pr_bucket_display?: string | null;
+  /** STATIC bucket for the month -- the one target/posted/commission are calculated against. */
+  static_monthly_pr_bucket: string | null;
+  static_monthly_pr_bucket_display?: string | null;
+  static_monthly_pr_bucket_updated_at?: string | null;
   pr_bucket_team: string | null;
+  pr_bucket_team_display?: string | null;
   percentaged_target: string | null;
   percentaged_target_updated_at: string | null;
   installment_commission: string | null;
   commission_baseline_repaid: string | null;
   commission_baseline_at: string | null;
   monthly_repaid_amount: number;
+  /** Config for static_monthly_pr_bucket (falls back to the live bucket until the static one is captured). */
   pr_bucket_config: PRBucketConfigInfo | null;
 }
 
@@ -118,13 +133,18 @@ export interface InstallmentSummary {
   total_repaid: number;
   total_commission: number;
   total_percentaged_target: number;
+  /** RepaymentRecord amount posted within the posted_period window, for the loans in this group. */
+  total_posted: number;
 }
 
+/** Keyed by static_monthly_pr_bucket (plus 'unassigned' for installments with none). */
 export type PRBucketSummaryMap = Record<string, InstallmentSummary>;
 
 export interface InstallmentsResponse {
   summary: InstallmentSummary;
   pr_bucket_summary: PRBucketSummaryMap;
+  /** Window total_posted was summed over (follows due_date_after/_before, else this month). */
+  posted_period?: { start: string; end: string };
   count: number;
   page: number;
   page_size: number;
@@ -145,6 +165,7 @@ export const EMPTY_SUMMARY: InstallmentSummary = {
   total_repaid: 0,
   total_commission: 0,
   total_percentaged_target: 0,
+  total_posted: 0,
 };
 
 // ============================================================================
@@ -166,6 +187,13 @@ export const PR_BUCKET_TEAMS: { value: string; label: string }[] = [
   { value: 'legal', label: 'Legal' },
 ];
 
+/**
+ * Query param to filter the list by the SAME bucket the summary cards are grouped by.
+ * Use this (not `pr_bucket`, which is the live bucket) when a bucket card is clicked,
+ * otherwise the filtered rows won't match the card's counts.
+ */
+export const PR_BUCKET_FILTER_PARAM = 'static_monthly_pr_bucket';
+
 const PR_BUCKET_ORDER = ['CURRENT', 'PR30', 'PR31_60', 'PR61_90', 'PR90_PLUS', 'unassigned'];
 
 export function prBucketLabel(bucketKey: string): string {
@@ -182,6 +210,54 @@ export function sortedBucketEntries(
     ([a], [b]) => PR_BUCKET_ORDER.indexOf(a) - PR_BUCKET_ORDER.indexOf(b)
   );
 }
+
+/** Bucket used for this month's target/commission -- static, falling back to live until captured. */
+export const effectivePRBucket = (row: Pick<Installment, 'static_monthly_pr_bucket' | 'pr_bucket'>) =>
+  row.static_monthly_pr_bucket ?? row.pr_bucket;
+
+// ============================================================================
+// PERFORMANCE RATE -- same formula as the backend's percentaged_performance_rate:
+// (amount posted / percentaged target) * 100. Undefined when there is no target,
+// so the UI shows "—" instead of a misleading 0%.
+// ============================================================================
+
+export const prPerformanceRate = (
+  posted: string | number | null | undefined,
+  target: string | number | null | undefined
+): number | undefined => {
+  const t = parseFloat(String(target ?? '0')) || 0;
+  if (t <= 0) return undefined;
+  const p = parseFloat(String(posted ?? '0')) || 0;
+  return (p / t) * 100;
+};
+
+/** 70% / 40% thresholds, matching the analytics dashboard's rate pills. */
+const performanceRateTone = (rate: number) =>
+  rate >= 70
+    ? { pill: 'bg-green-100 text-green-800', bar: 'bg-green-500' }
+    : rate >= 40
+      ? { pill: 'bg-yellow-100 text-yellow-800', bar: 'bg-yellow-500' }
+      : { pill: 'bg-red-100 text-red-800', bar: 'bg-red-500' };
+
+export const PerformanceRateBadge = ({ rate, showBar = false }: { rate: number | undefined; showBar?: boolean }) => {
+  if (rate === undefined) return <span className="text-xs text-gray-300" title="No percentaged target">—</span>;
+  const tone = performanceRateTone(rate);
+  return (
+    <span className="inline-flex flex-col items-end gap-1">
+      <span
+        className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone.pill}`}
+        title="Performance rate = posted this month ÷ percentaged target × 100"
+      >
+        {rate.toFixed(1)}%
+      </span>
+      {showBar && (
+        <span className="block h-1 w-16 overflow-hidden rounded-full bg-gray-200" aria-hidden="true">
+          <span className={`block h-full ${tone.bar}`} style={{ width: `${Math.min(Math.max(rate, 0), 100)}%` }} />
+        </span>
+      )}
+    </span>
+  );
+};
 
 // ============================================================================
 // FORMATTERS
@@ -273,6 +349,30 @@ export const PRBucketBadge = ({ bucket }: { bucket: string | null | undefined })
   );
 };
 
+/**
+ * Static monthly bucket badge, plus a small "Now: …" note when the live bucket has
+ * since moved on -- so users can see why an installment in e.g. 31-60 days is still
+ * earning 1-30 commission this month.
+ */
+export const MonthlyPRBucketCell = ({ installment }: { installment: Installment }) => {
+  const monthly = effectivePRBucket(installment);
+  const live = installment.pr_bucket;
+  const moved = !!installment.static_monthly_pr_bucket && !!live && live !== installment.static_monthly_pr_bucket;
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <PRBucketBadge bucket={monthly} />
+      {moved && (
+        <span
+          className="text-[11px] text-gray-500 whitespace-nowrap"
+          title="Live bucket today. This month's target and commission stay on the monthly bucket until the 1st."
+        >
+          Now: {prBucketLabel(live!)}
+        </span>
+      )}
+    </div>
+  );
+};
+
 // ============================================================================
 // SUMMARY PANEL -- overview cards + per-PR-bucket breakdown grid
 // ============================================================================
@@ -288,7 +388,9 @@ interface SummaryPanelProps {
 export const InstallmentSummaryPanel: React.FC<SummaryPanelProps> = ({
   summary, prBucketSummary, isLoading, activeBucket, onSelectBucket,
 }) => {
-  const { canViewTarget, canViewCommission, canViewPRBuckets } = usePRVisibility();
+  const { canViewTarget, canViewCommission, canViewPRBuckets, canViewPostedPRAmount } = usePRVisibility();
+  // The rate exposes posted relative to target, so it needs both permissions.
+  const canViewRate = canViewTarget && canViewPostedPRAmount;
 
   if (isLoading) {
     return (
@@ -299,6 +401,8 @@ export const InstallmentSummaryPanel: React.FC<SummaryPanelProps> = ({
       </div>
     );
   }
+
+  const overallRate = prPerformanceRate(summary.total_posted, summary.total_percentaged_target);
 
   const cards = [
     {
@@ -334,6 +438,16 @@ export const InstallmentSummaryPanel: React.FC<SummaryPanelProps> = ({
       visible: canViewTarget,
     },
     {
+      label: 'Posted (Month)',
+      value: formatCurrencyCompact(summary.total_posted),
+      sub: canViewRate
+        ? overallRate === undefined ? 'No target to measure against' : `${overallRate.toFixed(1)}% of target`
+        : 'Posted against PR loans',
+      icon: Banknote,
+      color: 'indigo',
+      visible: canViewPostedPRAmount,
+    },
+    {
       label: 'Commission',
       value: formatCurrency(summary.total_commission),
       sub: 'Current month commission',
@@ -352,11 +466,15 @@ export const InstallmentSummaryPanel: React.FC<SummaryPanelProps> = ({
     green: 'bg-green-100 text-green-600',
   };
 
+  const cardGridCols =
+    // 6 cards only fit without truncating amounts on very wide screens; wrap to 2 rows of 3 below that.
+    cards.length >= 6 ? 'lg:grid-cols-3 2xl:grid-cols-6' : cards.length === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4';
+
   const bucketEntries = canViewPRBuckets ? sortedBucketEntries(prBucketSummary) : [];
 
   return (
     <div className="space-y-4">
-      <div className={`grid grid-cols-2 sm:grid-cols-3 ${cards.length > 4 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-3`}>
+      <div className={`grid grid-cols-2 sm:grid-cols-3 ${cardGridCols} gap-3`}>
         {cards.map((card) => {
           const Icon = card.icon;
           return (
@@ -379,10 +497,15 @@ export const InstallmentSummaryPanel: React.FC<SummaryPanelProps> = ({
       {bucketEntries.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <PieChart size={16} className="text-gray-500" />
-              PR Bucket Breakdown
-            </h3>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <PieChart size={16} className="text-gray-500" />
+                PR Bucket Breakdown
+              </h3>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Grouped by each installment&apos;s monthly bucket (fixed on the 1st), so target, posted and commission line up.
+              </p>
+            </div>
             {activeBucket && onSelectBucket && (
               <button
                 onClick={() => onSelectBucket(undefined)}
@@ -395,6 +518,7 @@ export const InstallmentSummaryPanel: React.FC<SummaryPanelProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
             {bucketEntries.map(([bucketKey, stats]) => {
               const isActive = activeBucket === bucketKey;
+              const rate = prPerformanceRate(stats.total_posted, stats.total_percentaged_target);
               return (
                 <button
                   key={bucketKey}
@@ -405,21 +529,38 @@ export const InstallmentSummaryPanel: React.FC<SummaryPanelProps> = ({
                       : 'bg-gray-50 border-transparent hover:bg-gray-100'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <PRBucketBadge bucket={bucketKey === 'unassigned' ? null : bucketKey} />
-                    <span className="text-xs text-gray-500">{stats.total_installments} installments</span>
+                    <span className="text-xs text-gray-500 whitespace-nowrap">{stats.total_installments} inst.</span>
                   </div>
-                  <div className="mt-2 text-sm font-semibold text-gray-900">
-                   % Target {formatCurrencyCompact(stats.total_percentaged_target)}
+
+                  <div className="mt-2">
+                    <p className="text-[11px] text-gray-500">Cumulative balance</p>
+                    <p className="text-sm font-semibold text-gray-900">{formatCurrencyCompact(stats.total_cumulative_balance)}</p>
                   </div>
+
                   <div className="mt-1 flex items-center justify-between text-xs text-gray-500">
                     <span>{stats.total_overdue} overdue</span>
                     <span>{stats.total_paid_off} paid off</span>
                   </div>
-                  {(canViewTarget || canViewCommission) && (
-                    <div className="mt-1 flex items-center justify-between text-xs text-gray-500">
-                      {canViewTarget && <span>Target: {formatCurrencyCompact(stats.total_percentaged_target)}</span>}
-                      {canViewCommission && <span>Comm: {formatCurrency(stats.total_commission)}</span>}
+
+                  {(canViewTarget || canViewPostedPRAmount || canViewCommission) && (
+                    <div className="mt-2 space-y-1 border-t border-gray-200/70 pt-2 text-xs text-gray-600">
+                      {canViewTarget && (
+                        <div className="flex justify-between"><span>Target</span><span className="font-medium text-gray-800">{formatCurrencyCompact(stats.total_percentaged_target)}</span></div>
+                      )}
+                      {canViewPostedPRAmount && (
+                        <div className="flex justify-between"><span>Posted</span><span className="font-medium text-blue-700">{formatCurrencyCompact(stats.total_posted)}</span></div>
+                      )}
+                      {canViewCommission && (
+                        <div className="flex justify-between"><span>Commission</span><span className="font-medium text-green-700">{formatCurrency(stats.total_commission)}</span></div>
+                      )}
+                      {canViewRate && (
+                        <div className="flex items-center justify-between pt-0.5">
+                          <span>Perf. rate</span>
+                          <PerformanceRateBadge rate={rate} showBar />
+                        </div>
+                      )}
                     </div>
                   )}
                 </button>
@@ -453,6 +594,7 @@ export function getInstallmentColumns({
   // NOTE: this is a plain function, not a component — it must NOT call hooks.
   // The page calls usePRVisibility() and passes the result in as `visibility`.
   const { canViewPRBuckets, canViewTarget, canViewCommission, canViewPostedPRAmount } = visibility;
+  const canViewRate = canViewTarget && canViewPostedPRAmount;
 
   const columns: any[] = [
     // --- Dates -------------------------------------------------------------
@@ -581,11 +723,13 @@ export function getInstallmentColumns({
     ...(canViewPRBuckets
       ? [
           {
-            id: 'pr_bucket',
-            label: 'PR Bucket',
-            accessor: (row: Installment) => row.pr_bucket,
-            Cell: (value: string | null) => <PRBucketBadge bucket={value} />,
-            width: 150,
+            // Monthly (static) bucket -- the one this month's target/commission use.
+            // Shows the live bucket underneath when it has moved on since the 1st.
+            id: 'static_monthly_pr_bucket',
+            label: 'PR Bucket (Month)',
+            accessor: (row: Installment) => effectivePRBucket(row),
+            Cell: (_value: string | null, row: Installment) => <MonthlyPRBucketCell installment={row} />,
+            width: 160,
             sortable: true,
           },
           {
@@ -626,6 +770,22 @@ export function getInstallmentColumns({
             </span>
           ),
           width: 140,
+        }]
+      : []),
+    ...(canViewRate
+      ? [{
+          id: 'performance_rate',
+          label: 'Perf. Rate',
+          // Not sortable: it's derived client-side, not a DB column, so a server-side
+          // `ordering=performance_rate` would fail in InstallmentViewSet.order_by().
+          accessor: (row: Installment) => prPerformanceRate(row.monthly_repaid_amount, row.percentaged_target) ?? -1,
+          Cell: (_value: number, row: Installment) => (
+            <span className="block text-right">
+              <PerformanceRateBadge rate={prPerformanceRate(row.monthly_repaid_amount, row.percentaged_target)} />
+            </span>
+          ),
+          width: 110,
+          sortable: false,
         }]
       : []),
     ...(canViewCommission
