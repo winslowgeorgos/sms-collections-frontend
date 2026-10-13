@@ -63,6 +63,12 @@ interface LoanFilters {
   to_repossess?: boolean;
   // PR Bucket (CBK categorization) filter
   pr_bucket?: string;
+  // Vehicle (BC carInfos) filters -- matched against the same vehicle
+  car_make?: string;
+  car_model?: string;
+  car_year?: string;
+  car_year_min?: string;
+  car_year_max?: string;
   ordering?: string;
   page: number;
   page_size: number;
@@ -124,6 +130,18 @@ const getOfficerName = (officer: any): string => {
   return fullName || officer.full_name || officer.username || `Officer ${officer.id}`;
 };
 
+// Helper: "MAKE MODEL (YEAR)" for every vehicle on a loan (BC carInfos).
+const formatVehicles = (loan: Loan): string => {
+  const cars = loan.car_infos || [];
+  if (cars.length === 0) return '-';
+  return cars
+    .map(car => {
+      const name = [car.make, car.model].filter(Boolean).join(' ') || 'Unknown';
+      return car.year ? `${name} (${car.year})` : name;
+    })
+    .join('; ');
+};
+
 export default function LoansPage() {
   const router = useRouter();
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -154,6 +172,11 @@ export default function LoansPage() {
     due_date_after: undefined,
     due_date_before: undefined,
     pr_bucket: undefined,
+    car_make: undefined,
+    car_model: undefined,
+    car_year: undefined,
+    car_year_min: undefined,
+    car_year_max: undefined,
     ordering: '-disburse_time',
     search: undefined
   });
@@ -220,7 +243,13 @@ export default function LoansPage() {
     filters.repossession_status,
     filters.repossession_status_not,
     filters.to_repossess,
-    filters.pr_bucket
+    filters.pr_bucket,
+    // Vehicle filters
+    filters.car_make,
+    filters.car_model,
+    filters.car_year,
+    filters.car_year_min,
+    filters.car_year_max
   ]);
 
   const fetchLoans = async () => {
@@ -301,6 +330,11 @@ export default function LoansPage() {
       due_date_after: undefined,
       due_date_before: undefined,
       pr_bucket: undefined,
+      car_make: undefined,
+      car_model: undefined,
+      car_year: undefined,
+      car_year_min: undefined,
+      car_year_max: undefined,
       ordering: '-disburse_time',
       search: undefined
     });
@@ -483,6 +517,25 @@ export default function LoansPage() {
       accessor: (row: Loan) => row.registration_number,
       width: 140,
       sortable: true,
+    },
+    {
+      id: 'vehicle',
+      label: 'Vehicle',
+      // Plain string for export: "MAZDA CX-5 (2017)", multiple vehicles joined with "; "
+      accessor: (row: Loan) => formatVehicles(row),
+      Cell: (value: string, row: Loan) => {
+        const cars = row.car_infos || [];
+        if (cars.length === 0) return <span className="text-gray-400 text-sm">-</span>;
+        const [first, ...rest] = cars;
+        return (
+          <div className="text-sm" title={value}>
+            <span className="font-medium">{[first.make, first.model].filter(Boolean).join(' ') || '-'}</span>
+            {first.year && <span className="text-gray-500 ml-1">({first.year})</span>}
+            {rest.length > 0 && <span className="text-xs text-gray-500 ml-1">+{rest.length} more</span>}
+          </div>
+        );
+      },
+      width: 170,
     },
     {
       id: 'total_amount',
@@ -876,12 +929,60 @@ export default function LoansPage() {
       <div className="relative">
         <input
           type="text"
-          placeholder="Search by customer name, phone number, loan ID, registration number, or identity number..."
+          placeholder="Search by customer name, phone, loan ID, registration, ID number, or vehicle make / model / year / frame / engine no..."
           value={filters.search || ''}
           onChange={(e) => handleFilterChange('search', e.target.value)}
           className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         <Search className="absolute left-3 top-2.5 h-5 w-5 text-gray-400" />
+      </div>
+
+      {/* Vehicle Search (BC carInfos) -- all three match the same vehicle */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex items-center text-sm font-medium text-gray-700 mr-1">
+          <Car size={16} className="mr-1 text-gray-500" />
+          Vehicle:
+        </span>
+        <input
+          type="text"
+          placeholder="Make (e.g. Mazda)"
+          value={filters.car_make || ''}
+          onChange={(e) => handleFilterChange('car_make', e.target.value || undefined)}
+          className="w-44 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <input
+          type="text"
+          placeholder="Model (e.g. CX-5)"
+          value={filters.car_model || ''}
+          onChange={(e) => handleFilterChange('car_model', e.target.value || undefined)}
+          className="w-44 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <input
+          type="text"
+          inputMode="numeric"
+          maxLength={4}
+          placeholder="Year (e.g. 2017)"
+          value={filters.car_year || ''}
+          onChange={(e) => handleFilterChange('car_year', e.target.value.replace(/\D/g, '') || undefined)}
+          className="w-36 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        {(filters.car_make || filters.car_model || filters.car_year || filters.car_year_min || filters.car_year_max) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setFilters(prev => ({
+              ...prev,
+              car_make: undefined,
+              car_model: undefined,
+              car_year: undefined,
+              car_year_min: undefined,
+              car_year_max: undefined,
+              page: 1,
+            }))}
+          >
+            Clear vehicle
+          </Button>
+        )}
       </div>
 
       {/* Loans Table */}
@@ -1293,6 +1394,79 @@ export default function LoansPage() {
                 />
               </div>
             </div>
+          </div>
+
+          {/* Vehicle Filters (BC carInfos) */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2 flex items-center gap-2">
+              <Car size={16} className="text-blue-500" />
+              Vehicle
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Make
+                </label>
+                <input
+                  type="text"
+                  value={tempFilters.car_make || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, car_make: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="e.g. Mazda"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Model
+                </label>
+                <input
+                  type="text"
+                  value={tempFilters.car_model || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, car_model: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="e.g. CX-5"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Year (exact)
+                </label>
+                <input
+                  type="number"
+                  value={tempFilters.car_year || ''}
+                  onChange={(e) => setTempFilters(prev => ({ ...prev, car_year: e.target.value || undefined }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="e.g. 2017"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Year From
+                  </label>
+                  <input
+                    type="number"
+                    value={tempFilters.car_year_min || ''}
+                    onChange={(e) => setTempFilters(prev => ({ ...prev, car_year_min: e.target.value || undefined }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="2015"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Year To
+                  </label>
+                  <input
+                    type="number"
+                    value={tempFilters.car_year_max || ''}
+                    onChange={(e) => setTempFilters(prev => ({ ...prev, car_year_max: e.target.value || undefined }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="2020"
+                  />
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">Make and model match partially; all vehicle filters must match the same vehicle.</p>
           </div>
 
           {/* PR Bucket / Target & Commission Filters */}
