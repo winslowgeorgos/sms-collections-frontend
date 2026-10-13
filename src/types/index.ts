@@ -316,6 +316,22 @@ export interface YardStats {
   total_installments_in_yards: number;
 }
 
+// ============ VEHICLE (BC carInfos) ============
+// One entry per vehicle attached to a loan. Mirrors MainLoan.car_infos on the
+// backend (BC `carInfos`, normalized to snake_case). Any extra key BC sends is
+// passed through as-is, hence the index signature.
+export interface CarInfo {
+  id: string;
+  make: string;
+  model: string;
+  year: string;
+  registration_number: string;
+  frame_number: string;
+  engine_no: string;
+  pin_num: string;
+  [key: string]: string | undefined;
+}
+
 export interface Loan {
   id: string;
   loan_id: string;
@@ -328,6 +344,8 @@ export interface Loan {
   phone_number: string;
   identity_num: string;
   registration_number: string;
+  // All vehicles on this loan (registration_number above is the first one)
+  car_infos: CarInfo[];
   apply_amount: string;
   total_amount: string;
   disburse_amount: string;
@@ -948,6 +966,9 @@ export interface Installment {
   loan_id: string;
   customer_name: string;
   phone_number: string;
+  registration_number: string;
+  // Vehicles on the parent loan (from main_loan.car_infos)
+  car_infos: CarInfo[];
   total_amount: string;
   repaid: string;
   balance: string;

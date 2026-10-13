@@ -10,7 +10,7 @@ import {
   Clock, AlertCircle, CheckCircle, User, Building,
   FileText, MessageSquare, PhoneCall, Download, Edit,
   Trash2, Eye, MessageCircle, Bell, Plus, FileWarning,
-  Send, Printer, Loader2, X, AlertTriangle, Calendar as CalendarIcon
+  Send, Printer, Loader2, X, AlertTriangle, Calendar as CalendarIcon, Car
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePermissions } from '@/context/permission-context';
@@ -18,6 +18,98 @@ import InstallmentBreakdownTable from '@/components/loans/InstallmentTable';
 import CreateCallLogModal from '@/components/call_logs/CreateCallLogModal';
 import AddPaymentReminderModal from '@/components/call_logs/AddPaymentReminderModal';
 import SendSMSModal from '@/components/loans/SendSMSModal';
+import type { CarInfo } from '@/types';
+
+// ============ VEHICLE INFORMATION ============
+// Renders every vehicle in main_loan.car_infos. Falls back to the loan-level
+// registration_number / model for loans synced before car_infos existed.
+function getLoanVehicles(mainLoan: LoanDetails['main_loan']): CarInfo[] {
+  if (mainLoan.car_infos && mainLoan.car_infos.length > 0) return mainLoan.car_infos;
+  if (mainLoan.registration_number || mainLoan.model) {
+    return [{
+      id: '',
+      make: '',
+      model: mainLoan.model || '',
+      year: '',
+      registration_number: mainLoan.registration_number || '',
+      frame_number: '',
+      engine_no: '',
+      pin_num: '',
+    }];
+  }
+  return [];
+}
+
+function VehicleField({ label, value, mono = false }: { label: string; value?: string | null; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className={`font-medium text-gray-900 break-all ${mono ? 'font-mono text-sm' : ''}`}>
+        {value && String(value).trim() ? value : <span className="text-gray-400">—</span>}
+      </p>
+    </div>
+  );
+}
+
+function VehicleInfoCard({ mainLoan }: { mainLoan: LoanDetails['main_loan'] }) {
+  const vehicles = getLoanVehicles(mainLoan);
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <Car className="h-5 w-5 text-gray-600 mr-2" />
+            <h2 className="text-lg font-semibold text-gray-900">Vehicle Information</h2>
+            {vehicles.length > 1 && (
+              <span className="ml-2 px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                {vehicles.length} vehicles
+              </span>
+            )}
+          </div>
+          {mainLoan.pin_num && (
+            <span className="text-sm text-gray-600">
+              PIN: <span className="font-mono font-medium text-gray-900">{mainLoan.pin_num}</span>
+            </span>
+          )}
+        </div>
+
+        {vehicles.length === 0 ? (
+          <p className="text-sm text-gray-500">No vehicle information available for this loan.</p>
+        ) : (
+          <div className="space-y-3">
+            {vehicles.map((car, index) => (
+              <div
+                key={car.id || car.registration_number || index}
+                className="p-4 rounded-lg border border-gray-200 bg-gray-50"
+              >
+                <div className="flex flex-wrap items-center gap-3 mb-3">
+                  {/* Number-plate style registration */}
+                  <span className="px-3 py-1 rounded border-2 border-gray-800 bg-yellow-300 font-mono font-bold tracking-wider text-gray-900">
+                    {car.registration_number || 'NO REG'}
+                  </span>
+                  <span className="font-semibold text-gray-900">
+                    {[car.make, car.model].filter(Boolean).join(' ') || 'Unknown vehicle'}
+                  </span>
+                  {car.year && <span className="text-sm text-gray-500">({car.year})</span>}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                  <VehicleField label="Make" value={car.make} />
+                  <VehicleField label="Model" value={car.model} />
+                  <VehicleField label="Year" value={car.year} />
+                  <VehicleField label="Registration No." value={car.registration_number} mono />
+                  <VehicleField label="Frame / Chassis No." value={car.frame_number} mono />
+                  <VehicleField label="Engine No." value={car.engine_no} mono />
+                  {car.pin_num && <VehicleField label="Vehicle PIN" value={car.pin_num} mono />}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export interface LoanDetails {
   main_loan: {
@@ -25,6 +117,12 @@ export interface LoanDetails {
     loan_id: string;
     customer_name: string;
     phone_number: string;
+    // Vehicle information -- registration_number/model are the primary (first)
+    // car; car_infos holds every vehicle from BC carInfos.
+    registration_number?: string | null;
+    pin_num?: string | null;
+    model?: string | null;
+    car_infos?: CarInfo[];
     total_amount: number;
     total_paid: number;
     apply_amount: number;
@@ -765,6 +863,13 @@ export default function LoanDetailsPage() {
                 <Phone size={14} className="mr-1 text-gray-400" />
                 <span>{main_loan.phone_number}</span>
               </div>
+              {main_loan.registration_number && (
+                <div className="flex items-center mt-1 text-sm">
+                  <Car size={14} className="mr-1 text-gray-400" />
+                  <span className="font-mono">{main_loan.registration_number}</span>
+                  {main_loan.model && <span className="ml-1 text-gray-500">· {main_loan.model}</span>}
+                </div>
+              )}
               {main_loan.current_assigned_officer && (
                 <div className="flex items-center mt-1 text-sm">
                   <User size={14} className="mr-1 text-gray-400" />
@@ -943,6 +1048,9 @@ export default function LoanDetailsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Vehicle Information (BC carInfos) */}
+      <VehicleInfoCard mainLoan={main_loan} />
 
       {/* Tabs */}
       <div className="border-b border-gray-200">
